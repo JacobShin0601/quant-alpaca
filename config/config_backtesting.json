@@ -1,0 +1,57 @@
+{
+  "data": {
+    "end_date": "2025-07-27",
+    "lookback_days": 60,
+    "markets": ["KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-ADA", "KRW-DOT"],
+    "candle_unit": 1,
+    "database_directory": "data/candles",
+    "database_pattern": "{market}_candles.db"
+  },
+  "backtesting": {
+    "initial_balance": 1000000,
+    "fees": {
+      "limit_order": {
+        "krw_market": 0.0005,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      },
+      "market_order": {
+        "krw_market": 0.00139,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      }
+    },
+    "slippage": {
+      "limit_order": 0.0000,
+      "market_order": 0.0005
+    },
+    "max_positions": 3,
+    "order_type": "limit"
+  },
+  "strategies": {
+    "default_list": [
+      "basic_momentum",
+      "vwap", 
+      "bollinger_bands",
+      "advanced_vwap",
+      "mean_reversion",
+      "macd"
+    ],
+    "run_all_available": false,
+    "parameters": {
+      "basic_momentum": {
+        "rsi_period": 14,
+        "rsi_overbought": 70,
+        "rsi_oversold": 30,
+        "ma_short": 20,
+        "ma_long": 50
+      }
+    }
+  },
+  "execution": {
+    "start_time": "09:00:00",
+    "end_time": "23:30:00",
+    "timezone": "Asia/Seoul",
+    "log_level": "INFO"
+  }
+}

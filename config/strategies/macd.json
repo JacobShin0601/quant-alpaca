@@ -1,0 +1,52 @@
+{
+  "data": {
+    "end_date": "2025-07-27",
+    "lookback_days": 60,
+    "markets": ["KRW-BTC", "KRW-ETH"],
+    "candle_unit": 1,
+    "database_directory": "data/candles",
+    "database_pattern": "{market}_candles.db"
+  },
+  "backtesting": {
+    "initial_balance": 1000000,
+    "fees": {
+      "limit_order": {
+        "krw_market": 0.0005,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      },
+      "market_order": {
+        "krw_market": 0.00139,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      }
+    },
+    "slippage": {
+      "limit_order": 0.0000,
+      "market_order": 0.0005
+    },
+    "max_positions": 2,
+    "order_type": "limit"
+  },
+  "strategy": {
+    "name": "macd",
+    "description": "MACD strategy with signal line crossover and histogram",
+    "parameters": {
+      "fast_period": 12,
+      "slow_period": 26,
+      "signal_period": 9,
+      "histogram_threshold": 0,
+      "use_histogram_filter": true,
+      "use_rsi_filter": true,
+      "rsi_period": 14,
+      "rsi_oversold": 30,
+      "rsi_overbought": 70
+    }
+  },
+  "execution": {
+    "start_time": "09:00:00",
+    "end_time": "23:30:00",
+    "timezone": "Asia/Seoul",
+    "log_level": "INFO"
+  }
+}

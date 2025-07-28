@@ -1,0 +1,56 @@
+{
+  "data": {
+    "end_date": "2025-07-27",
+    "lookback_days": 60,
+    "markets": ["KRW-BTC", "KRW-ETH", "KRW-XRP"],
+    "candle_unit": 1,
+    "database_directory": "data/candles",
+    "database_pattern": "{market}_candles.db"
+  },
+  "backtesting": {
+    "initial_balance": 1000000,
+    "fees": {
+      "limit_order": {
+        "krw_market": 0.0005,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      },
+      "market_order": {
+        "krw_market": 0.00139,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      }
+    },
+    "slippage": {
+      "limit_order": 0.0000,
+      "market_order": 0.0005
+    },
+    "max_positions": 3,
+    "order_type": "limit"
+  },
+  "strategy": {
+    "name": "advanced_vwap",
+    "description": "Advanced VWAP strategy with ADX filter and risk management",
+    "parameters": {
+      "vwap_period": 20,
+      "vwap_std_period": 20,
+      "vwap_std_multiplier": 1.5,
+      "adx_period": 14,
+      "adx_threshold": 20,
+      "profit_target_pct": 0.6,
+      "stop_loss_pct": 0.3,
+      "band_proximity": 0.002,
+      "volatility_window": 5,
+      "volatility_threshold": 0.15,
+      "volatility_action": "contrarian",
+      "extreme_threshold": 2.0,
+      "volume_period": 20
+    }
+  },
+  "execution": {
+    "start_time": "09:00:00",
+    "end_time": "23:30:00",
+    "timezone": "Asia/Seoul",
+    "log_level": "INFO"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "WebFetch(domain:claude.ai)",
+      "WebFetch(domain:docs.upbit.com)",
+      "Bash(cat:*)",
+      "Bash(chmod:*)",
+      "Bash(rm:*)",
+      "Bash(grep:*)"
+    ],
+    "deny": []
+  }
+}
