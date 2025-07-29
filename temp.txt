@@ -1,0 +1,49 @@
+● Fetch(https://www.investopedia.com/articles/active-trading/010815/best-technical-indicators-
+       cryptocurrency-trading.asp)
+  ⎿  Error: Domain www.investopedia.com is not allowed to be fetched
+
+● Fetch(https://github.com/search?q=cryptocurrency+trading+strategies+python)
+  ⎿  Error: Request failed with status code 429
+
+● 암호화폐 거래에서 널리 사용되는 전략들을 구현하겠습니다. 제가 알고 있는 주요 전략들은:
+
+  1. Ichimoku Cloud - 다중 시간대 분석을 통한 추세 파악
+  2. SuperTrend - ATR 기반의 추세 추종 지표
+  3. ATR Breakout - 변동성 돌파 전략
+  4. Volume Profile - 거래량 프로파일 기반 지지/저항
+  5. Fibonacci Retracement - 피보나치 되돌림 레벨
+  6. Keltner Channels - 변동성 채널 전략
+  7. Aroon Indicator - 추세 강도 측정
+  8. Donchian Channels - 가격 채널 돌파
+
+
+  =� Running ADVANCED_VWAP strategy...
+INFO:backtesting.engine:Starting backtest...
+INFO:backtesting.engine:[2025-05-28 01:22] BUY KRW-ADA: 228.789323 at 1049.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 02:27:00] STOP_LOSS KRW-ADA: 228.789323 at 1044.00
+INFO:backtesting.engine:[2025-05-28 02:28] BUY KRW-ADA: 114.722753 at 1046.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 04:05:00] STOP_LOSS KRW-ADA: 114.722753 at 1045.00
+INFO:backtesting.engine:[2025-05-28 04:29] BUY KRW-ADA: 229.665072 at 1045.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 05:50] BUY KRW-DOT: 19.017433 at 6310.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 06:01:00] STOP_LOSS KRW-ADA: 229.665072 at 1044.00
+INFO:backtesting.engine:[2025-05-28 06:57:00] STOP_LOSS KRW-DOT: 19.017433 at 6273.00
+INFO:backtesting.engine:[2025-05-28 09:01] BUY KRW-ADA: 114.503817 at 1048.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 09:50] SELL KRW-ADA: 114.503817 at 1044.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 10:59] BUY KRW-ADA: 228.136882 at 1052.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 12:52:00] STOP_LOSS KRW-ADA: 228.136882 at 1051.00
+INFO:backtesting.engine:[2025-05-28 14:41] BUY KRW-ADA: 345.158198 at 1043.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 15:44] SELL KRW-ADA: 345.158198 at 1041.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 16:50] BUY KRW-ADA: 461.538462 at 1040.00 (fee: 0.050%)
+INFO:backtesting.engine:[2025-05-28 18:28:00] STOP_LOSS KRW-ADA: 461.538462 at 1039.00
+INFO:backtesting.engine:Progress: 10% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 20% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 30% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 40% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 50% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 60% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 70% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 80% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:Progress: 90% - Trades: 88, Cash: ₩2,078,947, Positions: 0
+INFO:backtesting.engine:... (78 more trades not shown)
+INFO:backtesting.engine:Backtest completed! Total trades: 88
+ advanced_vwap completed: 134 trades

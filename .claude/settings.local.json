@@ -17,7 +17,11 @@
       "WebFetch(domain:arxiv.org)",
       "WebFetch(domain:quantpedia.com)",
       "WebFetch(domain:github.com)",
-      "WebFetch(domain:en.wikipedia.org)"
+      "WebFetch(domain:en.wikipedia.org)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "WebFetch(domain:www.investopedia.com)",
+      "Bash(pip install:*)"
     ],
     "deny": []
   }

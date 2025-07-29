@@ -12,11 +12,16 @@ import os
 from datetime import datetime
 
 try:
-    from .strategies import BaseStrategy, get_strategy
-    from .market_regime import MarketRegimeDetector, MarketRegime, RegimeIndicators
+    from .base import BaseStrategy
+    from .registry import get_strategy
+    from ..actions.market_regime import MarketRegimeDetector, MarketRegime, RegimeIndicators
 except ImportError:
-    from strategies import BaseStrategy, get_strategy
-    from market_regime import MarketRegimeDetector, MarketRegime, RegimeIndicators
+    from base import BaseStrategy
+    from registry import get_strategy
+    import sys
+    import os
+    sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+    from actions.market_regime import MarketRegimeDetector, MarketRegime, RegimeIndicators
 
 
 class RegimeStrategyConfig:
@@ -40,26 +45,26 @@ class RegimeStrategyConfig:
         return {
             "regime_strategies": {
                 "trending_up": {
-                    "primary": ["vwap_trend_following", "advanced_vwap_momentum"],
-                    "secondary": ["basic_momentum"],
+                    "primary": ["supertrend", "ichimoku", "donchian_channels", "aroon"],
+                    "secondary": ["basic_momentum", "vwap", "fibonacci_retracement"],
                     "weights": {"primary": 0.7, "secondary": 0.3},
                     "risk_multiplier": 1.2
                 },
                 "trending_down": {
-                    "primary": ["mean_reversion", "vwap_mean_reversion"],
-                    "secondary": ["bollinger_bands"],
+                    "primary": ["mean_reversion", "keltner_channels", "fibonacci_retracement"],
+                    "secondary": ["bollinger_bands", "supertrend", "volume_profile"],
                     "weights": {"primary": 0.6, "secondary": 0.4},
                     "risk_multiplier": 0.8
                 },
                 "sideways": {
-                    "primary": ["mean_reversion", "bollinger_bands"],
-                    "secondary": ["stochastic", "pairs"],
+                    "primary": ["mean_reversion", "bollinger_bands", "keltner_channels", "volume_profile"],
+                    "secondary": ["stochastic", "pairs", "ichimoku", "fibonacci_retracement"],
                     "weights": {"primary": 0.6, "secondary": 0.4},
                     "risk_multiplier": 1.0
                 },
                 "volatile": {
-                    "primary": ["advanced_vwap_bands"],
-                    "secondary": ["bollinger_bands"],
+                    "primary": ["atr_breakout", "advanced_vwap", "volume_profile"],
+                    "secondary": ["bollinger_bands", "keltner_channels", "aroon"],
                     "weights": {"primary": 0.5, "secondary": 0.5},
                     "risk_multiplier": 0.6
                 }
@@ -107,7 +112,139 @@ class RegimeStrategyConfig:
         if os.path.exists(config_file):
             with open(config_file, 'r') as f:
                 return json.load(f)
-        return {}
+        
+        # Default parameters for each strategy
+        default_configs = {
+            'ichimoku': {
+                'tenkan_period': 9,
+                'kijun_period': 26,
+                'senkou_b_period': 52,
+                'chikou_period': 26,
+                'strategy_variant': 'classic',
+                'use_volume': True,
+                'volume_threshold': 1.2
+            },
+            'supertrend': {
+                'atr_period': 10,
+                'multiplier': 3.0,
+                'strategy_variant': 'classic',
+                'use_volume_analysis': True,
+                'volume_threshold': 1.2,
+                'use_confirmation': True
+            },
+            'atr_breakout': {
+                'atr_period': 14,
+                'atr_multiplier': 2.0,
+                'lookback_period': 20,
+                'strategy_variant': 'adaptive',
+                'min_atr_pct': 0.5,
+                'max_atr_pct': 5.0,
+                'use_volume_confirmation': True,
+                'volume_threshold': 1.5
+            },
+            'keltner_channels': {
+                'ema_period': 20,
+                'atr_period': 10,
+                'multiplier': 2.0,
+                'strategy_variant': 'mean_reversion',
+                'squeeze_threshold': 0.015
+            },
+            'donchian_channels': {
+                'upper_period': 20,
+                'lower_period': 20,
+                'middle_period': 10,
+                'strategy_variant': 'breakout',
+                'min_width_pct': 1.0,
+                'use_volume': True,
+                'volume_threshold': 1.2
+            },
+            'vwap': {
+                'vwap_period': 20,
+                'strategy_variant': 'mean_reversion',
+                'vwap_threshold': 0.005,
+                'volume_threshold': 1.2,
+                'use_momentum': True
+            },
+            'advanced_vwap': {
+                'vwap_period': 20,
+                'adx_period': 14,
+                'adx_threshold': 20,
+                'profit_target_pct': 0.6,
+                'stop_loss_pct': 0.3,
+                'volatility_threshold': 0.15
+            },
+            'basic_momentum': {
+                'rsi_period': 14,
+                'rsi_oversold': 30,
+                'rsi_overbought': 70,
+                'ma_short': 10,
+                'ma_long': 30
+            },
+            'bollinger_bands': {
+                'bb_period': 20,
+                'bb_std_dev': 2.0,
+                'lower_threshold': 0.1,
+                'upper_threshold': 0.9,
+                'use_rsi': True
+            },
+            'mean_reversion': {
+                'bb_period': 20,
+                'bb_std_dev': 2.0,
+                'entry_zscore': 2.0,
+                'exit_zscore': 0.5,
+                'use_volume_filter': True
+            },
+            'macd': {
+                'fast_period': 12,
+                'slow_period': 26,
+                'signal_period': 9,
+                'use_histogram_filter': True,
+                'use_rsi_filter': True
+            },
+            'stochastic': {
+                'k_period': 14,
+                'd_period': 3,
+                'smooth_k': 3,
+                'oversold_level': 20,
+                'overbought_level': 80,
+                'use_volume_confirmation': True
+            },
+            'pairs': {
+                'lookback_period': 60,
+                'entry_threshold': 2.0,
+                'exit_threshold': 0.5,
+                'min_correlation': 0.7
+            },
+            'volume_profile': {
+                'profile_period': 50,
+                'num_bins': 20,
+                'poc_threshold': 0.003,
+                'min_volume_ratio': 1.2,
+                'momentum_threshold': 0.002,
+                'use_value_area': True
+            },
+            'fibonacci_retracement': {
+                'swing_period': 20,
+                'fib_proximity': 0.003,
+                'rsi_oversold': 30,
+                'rsi_overbought': 70,
+                'momentum_threshold': 0.001,
+                'use_golden_ratio': True
+            },
+            'aroon': {
+                'aroon_period': 25,
+                'oscillator_threshold': 50,
+                'momentum_threshold': 0.001,
+                'use_volume_confirmation': True,
+                'use_ma_confirmation': True,
+                'use_trend_strength': True,
+                'use_consolidation_breakout': True
+            }
+        }
+        
+        # Map strategy config names to base names
+        base_name = self._get_base_strategy_name(strategy_name)
+        return default_configs.get(base_name, {})
 
 
 class StrategyPerformanceTracker:
@@ -393,7 +530,15 @@ class EnsembleStrategy(BaseStrategy):
             'basic_momentum': 'basic_momentum',
             'stochastic': 'stochastic',
             'macd': 'macd',
-            'pairs': 'pairs'
+            'pairs': 'pairs',
+            'ichimoku': 'ichimoku',
+            'supertrend': 'supertrend',
+            'atr_breakout': 'atr_breakout',
+            'keltner_channels': 'keltner_channels',
+            'donchian_channels': 'donchian_channels',
+            'volume_profile': 'volume_profile',
+            'fibonacci_retracement': 'fibonacci_retracement',
+            'aroon': 'aroon'
         }
         
         return mapping.get(config_name, config_name)

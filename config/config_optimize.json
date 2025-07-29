@@ -1,0 +1,156 @@
+{
+    "optimization": {
+        "n_trials": 100,
+        "n_jobs": -1,
+        "timeout": 3600,
+        "objective": "sharpe_ratio",
+        "direction": "maximize",
+        "sampler": "TPE",
+        "pruner": "MedianPruner",
+        "train_ratio": 0.7
+    },
+    "backtesting": {
+        "initial_capital": 10000000,
+        "commission_rate": 0.0005,
+        "slippage_rate": 0.001,
+        "min_data_points": 1000
+    },
+    "strategy_params": {
+        "basic_momentum": {
+            "rsi_period": {"type": "int", "low": 10, "high": 20, "step": 2},
+            "rsi_oversold": {"type": "int", "low": 25, "high": 35, "step": 5},
+            "rsi_overbought": {"type": "int", "low": 65, "high": 75, "step": 5},
+            "ma_short": {"type": "int", "low": 8, "high": 15, "step": 1},
+            "ma_long": {"type": "int", "low": 25, "high": 35, "step": 2}
+        },
+        "vwap": {
+            "vwap_period": {"type": "int", "low": 10, "high": 50, "step": 5},
+            "vwap_threshold": {"type": "float", "low": 0.001, "high": 0.02, "step": 0.001},
+            "volume_threshold": {"type": "float", "low": 1.0, "high": 2.5, "step": 0.1},
+            "strategy_variant": {"type": "categorical", "choices": ["mean_reversion", "trend_following", "breakout", "combined"]},
+            "use_momentum": {"type": "categorical", "choices": [true, false]},
+            "momentum_period": {"type": "int", "low": 10, "high": 20, "step": 2}
+        },
+        "advanced_vwap": {
+            "vwap_period": {"type": "int", "low": 15, "high": 30, "step": 3},
+            "adx_period": {"type": "int", "low": 10, "high": 20, "step": 2},
+            "adx_threshold": {"type": "int", "low": 15, "high": 25, "step": 5},
+            "profit_target_pct": {"type": "float", "low": 0.4, "high": 1.0, "step": 0.1},
+            "stop_loss_pct": {"type": "float", "low": 0.2, "high": 0.5, "step": 0.05},
+            "volatility_threshold": {"type": "float", "low": 0.1, "high": 0.25, "step": 0.05},
+            "volatility_action": {"type": "categorical", "choices": ["pause", "contrarian", "momentum"]}
+        },
+        "bollinger_bands": {
+            "bb_period": {"type": "int", "low": 10, "high": 30, "step": 2},
+            "bb_std_dev": {"type": "float", "low": 1.5, "high": 3.0, "step": 0.25},
+            "lower_threshold": {"type": "float", "low": 0.05, "high": 0.25, "step": 0.05},
+            "upper_threshold": {"type": "float", "low": 0.75, "high": 0.95, "step": 0.05},
+            "use_rsi": {"type": "categorical", "choices": [true, false]},
+            "rsi_period": {"type": "int", "low": 10, "high": 20, "step": 2}
+        },
+        "mean_reversion": {
+            "bb_period": {"type": "int", "low": 15, "high": 30, "step": 3},
+            "bb_std_dev": {"type": "float", "low": 1.5, "high": 2.5, "step": 0.25},
+            "entry_zscore": {"type": "float", "low": 1.5, "high": 2.5, "step": 0.25},
+            "exit_zscore": {"type": "float", "low": 0.25, "high": 0.75, "step": 0.25},
+            "use_volume_filter": {"type": "categorical", "choices": [true, false]},
+            "volume_threshold": {"type": "float", "low": 1.0, "high": 2.0, "step": 0.2}
+        },
+        "macd": {
+            "fast_period": {"type": "int", "low": 8, "high": 15, "step": 1},
+            "slow_period": {"type": "int", "low": 20, "high": 30, "step": 2},
+            "signal_period": {"type": "int", "low": 5, "high": 12, "step": 1},
+            "use_histogram_filter": {"type": "categorical", "choices": [true, false]},
+            "use_rsi_filter": {"type": "categorical", "choices": [true, false]},
+            "rsi_period": {"type": "int", "low": 10, "high": 20, "step": 2}
+        },
+        "stochastic": {
+            "k_period": {"type": "int", "low": 10, "high": 20, "step": 2},
+            "d_period": {"type": "int", "low": 3, "high": 5, "step": 1},
+            "smooth_k": {"type": "int", "low": 2, "high": 5, "step": 1},
+            "oversold_level": {"type": "int", "low": 15, "high": 30, "step": 5},
+            "overbought_level": {"type": "int", "low": 70, "high": 85, "step": 5},
+            "use_volume_confirmation": {"type": "categorical", "choices": [true, false]}
+        },
+        "pairs": {
+            "lookback_period": {"type": "int", "low": 40, "high": 80, "step": 10},
+            "entry_threshold": {"type": "float", "low": 1.5, "high": 2.5, "step": 0.25},
+            "exit_threshold": {"type": "float", "low": 0.25, "high": 0.75, "step": 0.25},
+            "min_correlation": {"type": "float", "low": 0.6, "high": 0.8, "step": 0.05}
+        },
+        "ichimoku": {
+            "tenkan_period": {"type": "int", "low": 5, "high": 15, "step": 2},
+            "kijun_period": {"type": "int", "low": 20, "high": 35, "step": 3},
+            "senkou_b_period": {"type": "int", "low": 40, "high": 60, "step": 5},
+            "chikou_period": {"type": "int", "low": 20, "high": 30, "step": 2},
+            "strategy_variant": {"type": "categorical", "choices": ["classic", "trend", "breakout"]},
+            "use_volume": {"type": "categorical", "choices": [true, false]},
+            "volume_threshold": {"type": "float", "low": 1.0, "high": 2.0, "step": 0.2}
+        },
+        "supertrend": {
+            "atr_period": {"type": "int", "low": 7, "high": 14, "step": 1},
+            "multiplier": {"type": "float", "low": 2.0, "high": 4.0, "step": 0.5},
+            "strategy_variant": {"type": "categorical", "choices": ["classic", "multi_timeframe"]},
+            "use_volume_analysis": {"type": "categorical", "choices": [true, false]},
+            "volume_threshold": {"type": "float", "low": 1.0, "high": 2.0, "step": 0.2},
+            "use_confirmation": {"type": "categorical", "choices": [true, false]}
+        },
+        "atr_breakout": {
+            "atr_period": {"type": "int", "low": 10, "high": 20, "step": 2},
+            "atr_multiplier": {"type": "float", "low": 1.5, "high": 3.0, "step": 0.25},
+            "lookback_period": {"type": "int", "low": 15, "high": 30, "step": 3},
+            "strategy_variant": {"type": "categorical", "choices": ["standard", "adaptive"]},
+            "min_atr_pct": {"type": "float", "low": 0.3, "high": 0.7, "step": 0.1},
+            "max_atr_pct": {"type": "float", "low": 3.0, "high": 7.0, "step": 1.0},
+            "use_volume_confirmation": {"type": "categorical", "choices": [true, false]}
+        },
+        "keltner_channels": {
+            "ema_period": {"type": "int", "low": 15, "high": 25, "step": 2},
+            "atr_period": {"type": "int", "low": 8, "high": 15, "step": 1},
+            "multiplier": {"type": "float", "low": 1.5, "high": 3.0, "step": 0.25},
+            "strategy_variant": {"type": "categorical", "choices": ["mean_reversion", "breakout"]},
+            "squeeze_threshold": {"type": "float", "low": 0.01, "high": 0.02, "step": 0.005}
+        },
+        "donchian_channels": {
+            "upper_period": {"type": "int", "low": 15, "high": 30, "step": 3},
+            "lower_period": {"type": "int", "low": 15, "high": 30, "step": 3},
+            "middle_period": {"type": "int", "low": 8, "high": 15, "step": 1},
+            "strategy_variant": {"type": "categorical", "choices": ["breakout", "reversal"]},
+            "min_width_pct": {"type": "float", "low": 0.5, "high": 1.5, "step": 0.25},
+            "use_volume": {"type": "categorical", "choices": [true, false]}
+        },
+        "volume_profile": {
+            "profile_period": {"type": "int", "low": 30, "high": 100, "step": 10},
+            "num_bins": {"type": "int", "low": 15, "high": 30, "step": 5},
+            "poc_threshold": {"type": "float", "low": 0.002, "high": 0.005, "step": 0.001},
+            "min_volume_ratio": {"type": "float", "low": 1.0, "high": 1.5, "step": 0.1},
+            "momentum_threshold": {"type": "float", "low": 0.001, "high": 0.003, "step": 0.001},
+            "use_value_area": {"type": "categorical", "choices": [true, false]}
+        },
+        "fibonacci_retracement": {
+            "swing_period": {"type": "int", "low": 15, "high": 30, "step": 3},
+            "fib_proximity": {"type": "float", "low": 0.002, "high": 0.005, "step": 0.001},
+            "rsi_oversold": {"type": "int", "low": 25, "high": 35, "step": 5},
+            "rsi_overbought": {"type": "int", "low": 65, "high": 75, "step": 5},
+            "momentum_threshold": {"type": "float", "low": 0.0005, "high": 0.002, "step": 0.0005},
+            "use_golden_ratio": {"type": "categorical", "choices": [true, false]}
+        },
+        "aroon": {
+            "aroon_period": {"type": "int", "low": 20, "high": 30, "step": 2},
+            "oscillator_threshold": {"type": "int", "low": 40, "high": 60, "step": 5},
+            "momentum_threshold": {"type": "float", "low": 0.0005, "high": 0.002, "step": 0.0005},
+            "use_volume_confirmation": {"type": "categorical", "choices": [true, false]},
+            "use_ma_confirmation": {"type": "categorical", "choices": [true, false]},
+            "use_trend_strength": {"type": "categorical", "choices": [true, false]},
+            "use_consolidation_breakout": {"type": "categorical", "choices": [true, false]}
+        },
+        "ensemble": {
+            "confidence_threshold": {"type": "float", "low": 0.4, "high": 0.8, "step": 0.1},
+            "min_regime_duration": {"type": "int", "low": 5, "high": 20, "step": 5},
+            "transition_periods": {"type": "int", "low": 3, "high": 10, "step": 1},
+            "base_position_size": {"type": "float", "low": 0.15, "high": 0.35, "step": 0.05},
+            "strategy_rotation": {"type": "categorical", "choices": [true, false]},
+            "smooth_transition": {"type": "categorical", "choices": [true, false]}
+        }
+    }
+}

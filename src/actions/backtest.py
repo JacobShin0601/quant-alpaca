@@ -19,7 +19,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from agents.scrapper import UpbitDataScrapper
 from data.collector import UpbitDataCollector
 from backtesting.engine import BacktestEngine
-from actions.strategies import STRATEGIES
+from strategies import STRATEGIES
 
 
 class MultiStrategyBacktester:
@@ -660,7 +660,6 @@ Examples:
         backtester = MultiStrategyBacktester(args.config)
         success = backtester.run_backtest(
             strategies=args.strategy,
-            markets=args.market,
             use_cached_data=args.use_cached_data,
             data_only=args.data_only
         )

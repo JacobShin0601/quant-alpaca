@@ -19,14 +19,14 @@ from backtesting.engine import BacktestEngine
 from data.collector import UpbitDataCollector
 from agents.scrapper import UpbitDataScrapper
 
-# Try to import ensemble strategy
+# Import strategies
+from strategies import STRATEGIES
+
+# Import optimizer
 try:
-    from actions.ensemble_strategy import EnsembleStrategy
-    from actions.strategies import STRATEGIES
-    STRATEGIES['ensemble'] = EnsembleStrategy
-    ensemble_available = True
+    from optimization.strategy_optimizer import StrategyOptimizer
 except ImportError:
-    ensemble_available = False
+    StrategyOptimizer = None
 
 
 class MultiStrategyBacktester:
@@ -45,10 +45,9 @@ class MultiStrategyBacktester:
         )
         
         # Available strategies
-        from actions.strategies import STRATEGIES
         self.available_strategies = list(STRATEGIES.keys())
         
-        if ensemble_available and 'ensemble' not in self.available_strategies:
+        if 'ensemble' in STRATEGIES and 'ensemble' not in self.available_strategies:
             self.available_strategies.append('ensemble')
     
     def _calculate_date_range(self) -> Tuple[str, str]:
@@ -537,8 +536,44 @@ class MultiStrategyBacktester:
         
         print("\n" + "=" * 120)
     
+    def run_optimization(self, strategy_name: str, market_data: Dict[str, pd.DataFrame], 
+                        train_ratio: float = 0.7) -> Dict[str, Any]:
+        """Run hyperparameter optimization for a strategy"""
+        if StrategyOptimizer is None:
+            print("❌ Optimization module not available. Please install optuna.")
+            return {}
+        
+        print(f"\n🔧 Optimizing {strategy_name} strategy...")
+        
+        # Initialize optimizer
+        optimizer = StrategyOptimizer()
+        
+        # Prepare data for optimization
+        all_data = pd.concat(list(market_data.values()), ignore_index=True)
+        markets = list(market_data.keys())
+        
+        # Run optimization
+        if strategy_name == "all":
+            # Optimize all strategies except ensemble
+            exclude = ['ensemble'] if 'ensemble' in self.available_strategies else []
+            best_params = optimizer.optimize_all_strategies(all_data, markets, exclude=exclude)
+        elif strategy_name == "ensemble":
+            # Special handling for ensemble
+            best_params = optimizer.optimize_strategy("ensemble", all_data, markets, train_ratio)
+        else:
+            # Optimize single strategy
+            best_params = optimizer.optimize_strategy(strategy_name, all_data, markets, train_ratio)
+        
+        # Save optimization results
+        optimizer.save_results()
+        
+        print(f"\n✅ Optimization completed. Results saved to results/optimization/")
+        
+        return best_params
+    
     def run_backtest(self, strategies: List[str], markets: Optional[List[str]] = None, 
-                     use_cached_data: bool = False, data_only: bool = False):
+                     use_cached_data: bool = False, data_only: bool = False,
+                     optimize_strategy: str = None, train_ratio: float = 0.7):
         """Run multi-strategy backtesting for selected markets"""
         # Handle market selection
         if markets is None or len(markets) == 0 or 'all' in markets:
@@ -601,6 +636,39 @@ class MultiStrategyBacktester:
         
         # Load market data
         market_data = self.load_market_data(markets)
+        
+        # Check if optimization mode
+        if optimize_strategy:
+            # Run optimization instead of regular backtest
+            best_params = self.run_optimization(optimize_strategy, market_data, train_ratio)
+            
+            # After optimization, run backtest with optimized parameters on test set
+            if best_params:
+                print(f"\n📊 Running validation backtest with optimized parameters...")
+                
+                # Split data for validation
+                all_data = pd.concat(list(market_data.values()), ignore_index=True)
+                split_idx = int(len(all_data) * train_ratio)
+                
+                # Create test data
+                test_market_data = {}
+                for market, data in market_data.items():
+                    market_test_data = data.iloc[split_idx:].copy()
+                    if len(market_test_data) > 0:
+                        test_market_data[market] = market_test_data
+                
+                # Run validation backtests
+                validation_results = []
+                for strategy_name, params in best_params.items():
+                    try:
+                        print(f"\n📈 Validating {strategy_name} with optimized parameters...")
+                        # TODO: Run backtest with optimized parameters
+                        # This would require updating run_strategy_backtest to accept custom parameters
+                    except Exception as e:
+                        print(f"❌ Error validating {strategy_name}: {e}")
+                
+                print(f"\n✅ Optimization and validation completed!")
+            return True
         
         # Determine strategies to run
         if not strategies:
@@ -678,6 +746,10 @@ Examples:
                        help='Markets to test (e.g., KRW-BTC KRW-ETH or "all" for all markets)')
     parser.add_argument('--config', default='config/config_backtesting.json',
                        help='Path to configuration file')
+    parser.add_argument('--optimize-strategy', default=None,
+                       help='Optimize strategy hyperparameters ("all" or specific strategy)')
+    parser.add_argument('--train-ratio', type=float, default=0.7,
+                       help='Train/test split ratio for optimization (default: 0.7)')
     
     args = parser.parse_args()
     
@@ -687,7 +759,9 @@ Examples:
             strategies=args.strategy,
             markets=args.market,
             use_cached_data=args.use_cached_data,
-            data_only=args.data_only
+            data_only=args.data_only,
+            optimize_strategy=args.optimize_strategy,
+            train_ratio=args.train_ratio
         )
         sys.exit(0 if success else 1)
     

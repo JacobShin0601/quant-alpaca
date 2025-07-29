@@ -19,7 +19,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from agents.scrapper import UpbitDataScrapper
 from data.collector import UpbitDataCollector
 from backtesting.engine import BacktestEngine
-from actions.strategies import STRATEGIES
+from strategies import STRATEGIES
 
 
 class PerMarketBacktester:

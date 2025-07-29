@@ -175,8 +175,19 @@ class MarketRegimeDetector:
         plus_dm_smooth = pd.Series(plus_dm).rolling(window=period).mean()
         minus_dm_smooth = pd.Series(minus_dm).rolling(window=period).mean()
         
-        plus_di = pd.Series(np.where(atr > 0, 100 * plus_dm_smooth / atr, 0))
-        minus_di = pd.Series(np.where(atr > 0, 100 * minus_dm_smooth / atr, 0))
+        # Ensure all series have the same length
+        atr_values = atr.values if hasattr(atr, 'values') else atr
+        plus_dm_values = plus_dm_smooth.values if hasattr(plus_dm_smooth, 'values') else plus_dm_smooth
+        minus_dm_values = minus_dm_smooth.values if hasattr(minus_dm_smooth, 'values') else minus_dm_smooth
+        
+        # Handle NaN values and division by zero
+        plus_di_values = np.where((atr_values > 0) & ~np.isnan(atr_values) & ~np.isnan(plus_dm_values), 
+                                  100 * plus_dm_values / atr_values, 0)
+        minus_di_values = np.where((atr_values > 0) & ~np.isnan(atr_values) & ~np.isnan(minus_dm_values), 
+                                   100 * minus_dm_values / atr_values, 0)
+        
+        plus_di = pd.Series(plus_di_values, index=df.index)
+        minus_di = pd.Series(minus_di_values, index=df.index)
         
         # ADX
         # Avoid division by zero

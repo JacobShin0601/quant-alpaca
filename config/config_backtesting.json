@@ -28,6 +28,84 @@
     "max_positions": 4,
     "order_type": "limit"
   },
+  "position_sizing": {
+    "max_position_pct": 0.2,
+    "use_dynamic_sizing": true,
+    "use_garch_sizing": true,
+    "signal_strength": {
+      "indicator_weights": {
+        "rsi": 0.2,
+        "macd": 0.2,
+        "bollinger": 0.15,
+        "volume": 0.15,
+        "momentum": 0.15,
+        "vwap": 0.15
+      },
+      "strength_thresholds": {
+        "very_weak": 0.2,
+        "weak": 0.4,
+        "neutral": 0.6,
+        "strong": 0.8,
+        "very_strong": 1.0
+      }
+    },
+    "garch_config": {
+      "garch": {
+        "model_type": "GARCH",
+        "p": 1,
+        "q": 1,
+        "distribution": "normal",
+        "vol_targeting": false,
+        "refit_frequency": 100,
+        "min_observations": 100,
+        "forecast_horizon": 1,
+        "rescale": true,
+        "use_realized_vol": true,
+        "realized_vol_window": 20
+      },
+      "position_sizing": {
+        "base_position": 1.0,
+        "target_volatility": 0.02,
+        "max_leverage": 2.0,
+        "min_position": 0.1,
+        "inverse_vol_weighting": {
+          "enabled": true,
+          "vol_lookback": 20,
+          "vol_floor": 0.005,
+          "vol_cap": 0.10,
+          "smoothing_factor": 0.3
+        },
+        "kelly_criterion": {
+          "enabled": true,
+          "kelly_fraction": 0.25,
+          "win_rate_window": 50,
+          "profit_loss_ratio_window": 50,
+          "min_trades": 20,
+          "max_kelly_position": 0.5,
+          "use_garch_vol": true
+        }
+      },
+      "risk_adjustments": {
+        "volatility_regime_multipliers": {
+          "low": 1.2,
+          "normal": 1.0,
+          "high": 0.7,
+          "extreme": 0.4
+        },
+        "correlation_adjustment": {
+          "enabled": true,
+          "lookback": 60,
+          "high_correlation_threshold": 0.7,
+          "adjustment_factor": 0.8
+        },
+        "drawdown_adjustment": {
+          "enabled": true,
+          "max_drawdown_threshold": 0.1,
+          "position_reduction": 0.5
+        }
+      }
+    }
+  },
   "strategies": {
     "default_list": [
       "basic_momentum",
@@ -97,5 +175,148 @@
     "end_time": "23:30:00",
     "timezone": "Asia/Seoul",
     "log_level": "INFO"
+  },
+  "risk_management": {
+    "enabled": true,
+    "regime_parameters": {
+      "trending_up": {
+        "stop_loss": {
+          "base_pct": 0.02,
+          "volatility_adjusted": true,
+          "atr_multiplier": 1.5,
+          "order_type": "stop_limit",
+          "limit_offset_pct": 0.001
+        },
+        "take_profit": {
+          "base_pct": 0.06,
+          "volatility_adjusted": true,
+          "atr_multiplier": 3.0,
+          "order_type": "limit",
+          "partial_exits": [
+            {"pct": 0.03, "size": 0.3},
+            {"pct": 0.05, "size": 0.3},
+            {"pct": 0.08, "size": 0.4}
+          ]
+        },
+        "trailing_stop": {
+          "enabled": true,
+          "activation_pct": 0.02,
+          "trail_pct": 0.015,
+          "order_type": "stop_market"
+        }
+      },
+      "trending_down": {
+        "stop_loss": {
+          "base_pct": 0.015,
+          "volatility_adjusted": true,
+          "atr_multiplier": 1.0,
+          "order_type": "stop_market"
+        },
+        "take_profit": {
+          "base_pct": 0.03,
+          "volatility_adjusted": true,
+          "atr_multiplier": 1.5,
+          "order_type": "limit",
+          "partial_exits": [
+            {"pct": 0.015, "size": 0.5},
+            {"pct": 0.025, "size": 0.3},
+            {"pct": 0.04, "size": 0.2}
+          ]
+        },
+        "trailing_stop": {
+          "enabled": true,
+          "activation_pct": 0.01,
+          "trail_pct": 0.008,
+          "order_type": "stop_market"
+        }
+      },
+      "sideways": {
+        "stop_loss": {
+          "base_pct": 0.01,
+          "volatility_adjusted": true,
+          "atr_multiplier": 0.8,
+          "order_type": "stop_limit"
+        },
+        "take_profit": {
+          "base_pct": 0.02,
+          "volatility_adjusted": true,
+          "atr_multiplier": 1.2,
+          "order_type": "limit",
+          "partial_exits": [
+            {"pct": 0.01, "size": 0.5},
+            {"pct": 0.015, "size": 0.3},
+            {"pct": 0.025, "size": 0.2}
+          ]
+        },
+        "trailing_stop": {
+          "enabled": false,
+          "activation_pct": 0.015,
+          "trail_pct": 0.005,
+          "order_type": "stop_limit"
+        }
+      },
+      "volatile": {
+        "stop_loss": {
+          "base_pct": 0.025,
+          "volatility_adjusted": true,
+          "atr_multiplier": 2.0,
+          "order_type": "stop_market"
+        },
+        "take_profit": {
+          "base_pct": 0.04,
+          "volatility_adjusted": true,
+          "atr_multiplier": 2.0,
+          "order_type": "limit",
+          "partial_exits": [
+            {"pct": 0.02, "size": 0.4},
+            {"pct": 0.035, "size": 0.4},
+            {"pct": 0.05, "size": 0.2}
+          ]
+        },
+        "trailing_stop": {
+          "enabled": true,
+          "activation_pct": 0.015,
+          "trail_pct": 0.02,
+          "order_type": "stop_market"
+        }
+      }
+    },
+    "order_execution": {
+      "stop_loss": {
+        "market_conditions": {
+          "high_volatility": "market",
+          "normal": "stop_limit",
+          "low_liquidity": "stop_limit"
+        },
+        "urgency_threshold": 0.005,
+        "retry_strategy": {
+          "max_retries": 3,
+          "retry_delay_ms": 100,
+          "price_adjustment_pct": 0.001
+        }
+      },
+      "take_profit": {
+        "default": "limit",
+        "partial_fill_timeout": 5000,
+        "convert_to_market_after_timeout": false
+      }
+    },
+    "advanced_features": {
+      "breakeven_stop": {
+        "enabled": true,
+        "activation_pct": 0.01,
+        "offset_pct": 0.001
+      },
+      "time_based_stops": {
+        "enabled": true,
+        "tighten_after_minutes": 60,
+        "tightening_factor": 0.8
+      },
+      "correlation_adjustment": {
+        "enabled": true,
+        "high_correlation_threshold": 0.7,
+        "risk_reduction_factor": 0.8
+      }
+    }
   }
 }

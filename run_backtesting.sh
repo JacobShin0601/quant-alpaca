@@ -12,6 +12,8 @@ DATA_ONLY=false
 STRATEGIES=()
 MARKETS=()
 CONFIG_FILE=""
+OPTIMIZE_STRATEGY=""
+TRAIN_RATIO=0.7
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -41,6 +43,14 @@ while [[ $# -gt 0 ]]; do
             CONFIG_FILE="$2"
             shift 2
             ;;
+        --optimize-strategy)
+            OPTIMIZE_STRATEGY="$2"
+            shift 2
+            ;;
+        --train-ratio)
+            TRAIN_RATIO="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS] [--strategy STRATEGIES...] [--market MARKETS...]"
             echo ""
@@ -50,11 +60,15 @@ while [[ $# -gt 0 ]]; do
             echo "  --config FILE         Configuration file (default: config/config_backtesting.json)"
             echo "  --strategy STRATEGIES  Run specific strategies or 'all' for all strategies"
             echo "  --market MARKETS      Run specific markets or 'all' for all markets"
+            echo "  --optimize-strategy   Optimize strategy hyperparameters ('all' or specific strategy)"
+            echo "  --train-ratio RATIO   Train/test split ratio for optimization (default: 0.7)"
             echo "  -h, --help            Show this help message"
             echo ""
             echo "Available strategies:"
             echo "  basic_momentum, vwap, bollinger_bands, advanced_vwap"
-            echo "  mean_reversion, macd, stochastic, pairs"
+            echo "  mean_reversion, macd, stochastic, pairs, ichimoku"
+            echo "  supertrend, atr_breakout, keltner_channels, donchian_channels"
+            echo "  volume_profile, fibonacci_retracement, aroon, ensemble"
             echo ""
             echo "Available markets (examples):"
             echo "  KRW-BTC, KRW-ETH, KRW-XRP, KRW-ADA, KRW-SOL, KRW-DOT"
@@ -66,6 +80,8 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --strategy vwap --market KRW-BTC        # Run VWAP strategy on BTC only"
             echo "  $0 --strategy all --market KRW-ADA KRW-DOT # Run all strategies on specific markets"
             echo "  $0 --config config/strategies/vwap.json    # Use specific config file"
+            echo "  $0 --optimize-strategy all --train-ratio 0.7   # Optimize all strategies"
+            echo "  $0 --optimize-strategy vwap --train-ratio 0.8  # Optimize VWAP strategy only"
             exit 0
             ;;
         *)
@@ -79,6 +95,13 @@ done
 echo "Starting Quant-Alpaca Backtesting..."
 echo "===================================="
 echo "Options: USE_CACHED_DATA=$USE_CACHED_DATA, DATA_ONLY=$DATA_ONLY"
+
+# Check if optimization mode
+if [ ! -z "$OPTIMIZE_STRATEGY" ]; then
+    echo "Mode: OPTIMIZATION"
+    echo "Optimize Strategy: $OPTIMIZE_STRATEGY"
+    echo "Train Ratio: $TRAIN_RATIO"
+fi
 
 # Set default config file if not specified
 if [ -z "$CONFIG_FILE" ]; then
@@ -151,6 +174,11 @@ fi
 
 # Add config file
 CMD_ARGS="$CMD_ARGS --config $CONFIG_FILE"
+
+# Add optimization parameters if specified
+if [ ! -z "$OPTIMIZE_STRATEGY" ]; then
+    CMD_ARGS="$CMD_ARGS --optimize-strategy $OPTIMIZE_STRATEGY --train-ratio $TRAIN_RATIO"
+fi
 
 # Execute the backtesting
 python3 src/actions/backtest_market.py $CMD_ARGS
