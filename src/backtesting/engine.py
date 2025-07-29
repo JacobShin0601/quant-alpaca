@@ -14,6 +14,8 @@ from actions.dynamic_risk_management import DynamicRiskManager, OrderType, RiskP
 from actions.market_regime import MarketRegimeDetector, MarketRegime
 from actions.signal_strength import SignalStrengthCalculator
 from actions.garch_position_sizing import GARCHPositionSizer, PositionSizeResult
+from actions.var_risk_management import VaRRiskManager, VaRMethod, VaRResult, RiskLimitStatus
+from actions.regime_performance_analyzer import RegimePerformanceAnalyzer
 
 
 class BacktestEngine:
@@ -48,6 +50,21 @@ class BacktestEngine:
         # Risk management
         self.risk_manager = DynamicRiskManager(config.get('risk_management'))
         self.regime_detector = MarketRegimeDetector(config.get('regime_config'))
+        
+        # VaR risk management
+        self.var_manager = VaRRiskManager(config.get('var_risk_management'))
+        self.use_var_limits = config.get('var_risk_management', {}).get('enabled', False)
+        self.var_check_frequency = timedelta(minutes=config.get('var_risk_management', {}).get('check_frequency_minutes', 60))
+        self.last_var_check = None
+        self.current_var_result = None
+        self.daily_pnl = 0
+        self.start_of_day_value = self.initial_balance
+        self.var_limit_breached = False
+        self.var_metrics_history = []
+        
+        # Regime performance analysis
+        self.regime_analyzer = RegimePerformanceAnalyzer(config.get('regime_analysis'))
+        self.analyze_regime_performance = config.get('analyze_regime_performance', True)
         
         # Logging control
         self.trade_count = 0
@@ -110,7 +127,27 @@ class BacktestEngine:
             if time_since_last_trade < self.min_trade_interval:
                 return  # Skip trade if too soon
         
+        # Check VaR limits if enabled
+        if self.use_var_limits and self.var_limit_breached:
+            # Only allow closing positions when VaR limit is breached
+            if signal == 1:  # Trying to buy
+                return  # Block new positions
+        
         if signal == 1:  # Buy
+            # Additional VaR check for new positions
+            if self.use_var_limits and self.current_var_result:
+                current_portfolio_value = self.calculate_portfolio_value({market: price})
+                risk_status = self.var_manager.check_risk_limits(
+                    current_portfolio_value,
+                    self.daily_pnl,
+                    self.positions,
+                    self.current_var_result,
+                    timestamp
+                )
+                
+                if not risk_status.trading_allowed:
+                    return  # Trading not allowed due to risk limits
+            
             if len(self.positions) < self.max_positions:
                 # Calculate base position size (max 20% of initial balance)
                 base_position_value = self.initial_balance * self.max_position_pct
@@ -318,6 +355,9 @@ class BacktestEngine:
             df_copy = self.generate_signals(df_copy, market)
             prepared_data[market] = df_copy
         
+        # Store prepared data for regime analysis
+        self.prepared_data = prepared_data
+        
         # Get all timestamps and sort them
         all_timestamps = set()
         for df in prepared_data.values():
@@ -326,10 +366,21 @@ class BacktestEngine:
         sorted_timestamps = sorted(list(all_timestamps))
         self.total_timestamps = len(sorted_timestamps)
         
+        # Initialize VaR tracking
+        self.start_of_day_value = self.initial_balance
+        last_day = None
+        current_prices = {}  # Initialize current_prices
+        
         # Run backtest
         last_progress = -1
         for i, timestamp in enumerate(sorted_timestamps):
             self.processed_timestamps = i + 1
+            
+            # Check if new day for VaR reset
+            current_day = timestamp.date() if hasattr(timestamp, 'date') else pd.to_datetime(timestamp).date()
+            if last_day is None or current_day > last_day:
+                self.start_of_day_value = self.calculate_portfolio_value(current_prices) if current_prices else self.initial_balance
+                last_day = current_day
             
             # Show progress every 10%
             progress = int((i / self.total_timestamps) * 100)
@@ -386,11 +437,78 @@ class BacktestEngine:
             
             # Record portfolio value
             portfolio_value = self.calculate_portfolio_value(current_prices)
+            
+            # Calculate daily P&L
+            self.daily_pnl = portfolio_value - self.start_of_day_value
+            
+            # Check VaR limits periodically
+            if self.use_var_limits:
+                should_check_var = (self.last_var_check is None or 
+                                   timestamp - self.last_var_check >= self.var_check_frequency)
+                
+                if should_check_var and len(self.portfolio_value_history) > 20:
+                    # Calculate portfolio returns
+                    portfolio_values = [pv['portfolio_value'] for pv in self.portfolio_value_history[-252:]]
+                    portfolio_returns = pd.Series(portfolio_values).pct_change().dropna()
+                    
+                    if len(portfolio_returns) > 20:
+                        # Calculate VaR
+                        self.current_var_result = self.var_manager.calculate_var_cvar(
+                            portfolio_returns,
+                            portfolio_value,
+                            VaRMethod.HISTORICAL
+                        )
+                        
+                        # Check risk limits
+                        risk_status = self.var_manager.check_risk_limits(
+                            portfolio_value,
+                            self.daily_pnl,
+                            self.positions,
+                            self.current_var_result,
+                            timestamp
+                        )
+                        
+                        # Handle risk limit breaches
+                        if not risk_status.trading_allowed:
+                            self.var_limit_breached = True
+                            
+                            # Close positions if required
+                            if risk_status.positions_to_close:
+                                for pos_market in risk_status.positions_to_close:
+                                    if pos_market in self.positions:
+                                        # Force sell signal
+                                        self.execute_trade(pos_market, -1, current_prices.get(pos_market, 0), timestamp)
+                        else:
+                            self.var_limit_breached = False
+                        
+                        # Update VaR history
+                        self.var_manager.update_history(
+                            portfolio_returns.iloc[-1] if len(portfolio_returns) > 0 else 0,
+                            self.current_var_result,
+                            timestamp
+                        )
+                        
+                        # Store VaR metrics
+                        self.var_metrics_history.append({
+                            'timestamp': timestamp,
+                            'var_1d': self.current_var_result.var_1d,
+                            'cvar_1d': self.current_var_result.cvar_1d,
+                            'var_amount': self.current_var_result.var_amount,
+                            'cvar_amount': self.current_var_result.cvar_amount,
+                            'daily_pnl': self.daily_pnl,
+                            'var_utilization': abs(self.daily_pnl) / self.current_var_result.var_amount if self.current_var_result.var_amount > 0 else 0,
+                            'limit_breached': self.var_limit_breached
+                        })
+                        
+                        self.last_var_check = timestamp
+            
             self.portfolio_value_history.append({
                 'timestamp': timestamp,
                 'portfolio_value': portfolio_value,
                 'cash': self.cash,
-                'positions': dict(self.positions)
+                'positions': dict(self.positions),
+                'daily_pnl': self.daily_pnl,
+                'var_limit_breached': self.var_limit_breached
             })
         
         # Calculate results
@@ -446,6 +564,62 @@ class BacktestEngine:
         # Use the already calculated annualized return
         calmar_ratio = abs(annualized_return_from_minutes / max_drawdown) if max_drawdown < 0 else 0
         
+        # Calculate VaR metrics if enabled
+        var_metrics = {}
+        if self.use_var_limits and self.var_metrics_history:
+            # Get VaR summary
+            var_summary = self.var_manager.get_risk_metrics_summary()
+            
+            # Calculate additional VaR statistics
+            var_breaches = sum(1 for m in self.var_metrics_history if m.get('daily_pnl', 0) < -m.get('var_amount', 0))
+            cvar_breaches = sum(1 for m in self.var_metrics_history if m.get('daily_pnl', 0) < -m.get('cvar_amount', 0))
+            
+            var_metrics = {
+                'var_metrics': {
+                    'average_var_1d': var_summary.get('average_var', 0),
+                    'average_cvar_1d': var_summary.get('average_cvar', 0),
+                    'var_breach_count': var_breaches,
+                    'cvar_breach_count': cvar_breaches,
+                    'var_breach_rate': var_breaches / len(self.var_metrics_history) if self.var_metrics_history else 0,
+                    'cvar_breach_rate': cvar_breaches / len(self.var_metrics_history) if self.var_metrics_history else 0,
+                    'max_var_utilization': max([m.get('var_utilization', 0) for m in self.var_metrics_history]) if self.var_metrics_history else 0,
+                    'limit_breach_days': sum(1 for m in self.var_metrics_history if m.get('limit_breached', False)),
+                    'var_history': self.var_metrics_history
+                }
+            }
+        
+        # Analyze regime performance if enabled
+        regime_analysis = {}
+        if self.analyze_regime_performance and hasattr(self, 'prepared_data'):
+            try:
+                analysis_results = self.regime_analyzer.analyze_regime_performance(
+                    self.portfolio_value_history,
+                    self.trade_history,
+                    self.prepared_data
+                )
+                
+                # Create performance table
+                regime_table = self.regime_analyzer.create_regime_performance_table(analysis_results)
+                
+                regime_analysis = {
+                    'regime_analysis': {
+                        'summary': analysis_results['summary'],
+                        'performance_table': regime_table.to_dict('records') if not regime_table.empty else [],
+                        'regime_metrics': {k: self._serialize_regime_metrics(v) for k, v in analysis_results['regime_metrics'].items()}
+                    }
+                }
+                
+                # Print regime performance table
+                if not regime_table.empty:
+                    print("\n" + "="*80)
+                    print("PERFORMANCE BY MARKET REGIME")
+                    print("="*80)
+                    print(regime_table.to_string(index=False))
+                    print("="*80 + "\n")
+                    
+            except Exception as e:
+                self.logger.warning(f"Failed to analyze regime performance: {e}")
+        
         results = {
             'initial_balance': self.initial_balance,
             'final_value': final_value,
@@ -459,7 +633,9 @@ class BacktestEngine:
             'max_drawdown_pct': max_drawdown * 100,
             'total_trades': len(self.trade_history),
             'portfolio_history': self.portfolio_value_history,
-            'trade_history': self.trade_history
+            'trade_history': self.trade_history,
+            **var_metrics,  # Add VaR metrics if available
+            **regime_analysis  # Add regime analysis if available
         }
         
         return results
@@ -489,6 +665,31 @@ class BacktestEngine:
         drawdown = (current_value - max_value) / max_value if max_value > 0 else 0
         
         return drawdown
+    
+    def _serialize_regime_metrics(self, metrics):
+        """Serialize regime metrics for JSON export"""
+        if metrics is None:
+            return None
+        
+        return {
+            'regime': metrics.regime.value,
+            'total_trades': metrics.total_trades,
+            'winning_trades': metrics.winning_trades,
+            'losing_trades': metrics.losing_trades,
+            'win_rate': metrics.win_rate,
+            'total_return': metrics.total_return,
+            'average_return': metrics.average_return,
+            'total_pnl': metrics.total_pnl,
+            'average_pnl': metrics.average_pnl,
+            'max_win': metrics.max_win,
+            'max_loss': metrics.max_loss,
+            'sharpe_ratio': metrics.sharpe_ratio,
+            'sortino_ratio': metrics.sortino_ratio,
+            'max_drawdown': metrics.max_drawdown,
+            'avg_holding_period': str(metrics.avg_holding_period),
+            'total_duration': str(metrics.total_duration),
+            'regime_percentage': metrics.regime_percentage
+        }
     
     def _check_stop_orders(self, market: str, current_price: float, timestamp: datetime):
         """Check and execute stop orders"""

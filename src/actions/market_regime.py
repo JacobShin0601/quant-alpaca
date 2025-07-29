@@ -281,7 +281,7 @@ class MarketRegimeDetector:
         Calculate Choppiness Index
         Values: 0-100, where > 61.8 indicates sideways market
         """
-        period = self.config['choppiness_period']
+        period = self.config.get('choppiness_period', 14)  # Default to 14
         
         # True Range sum
         high_low = df['high_price'] - df['low_price']
