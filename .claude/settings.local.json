@@ -7,7 +7,17 @@
       "Bash(cat:*)",
       "Bash(chmod:*)",
       "Bash(rm:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(python:*)",
+      "Bash(./run_backtesting.sh:*)",
+      "Bash(bash:*)",
+      "Bash(sqlite3:*)",
+      "Bash(sed:*)",
+      "WebFetch(domain:scholar.google.com)",
+      "WebFetch(domain:arxiv.org)",
+      "WebFetch(domain:quantpedia.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:en.wikipedia.org)"
     ],
     "deny": []
   }

@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Backtesting script for quant-alpaca
-# This script runs the backtesting engine with strategy selection support
-# Usage: ./run_backtesting.sh [OPTIONS] [--strategy STRATEGIES...]
+# This script runs the backtesting engine with strategy selection and market support
+# Usage: ./run_backtesting.sh [OPTIONS] [--strategy STRATEGIES...] [--market MARKETS...]
 
 set -e  # Exit on any error
 
@@ -10,6 +10,7 @@ set -e  # Exit on any error
 USE_CACHED_DATA=false
 DATA_ONLY=false
 STRATEGIES=()
+MARKETS=()
 CONFIG_FILE=""
 
 while [[ $# -gt 0 ]]; do
@@ -29,29 +30,41 @@ while [[ $# -gt 0 ]]; do
                 shift
             done
             ;;
+        --market)
+            shift
+            while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do
+                MARKETS+=("$1")
+                shift
+            done
+            ;;
         --config)
             CONFIG_FILE="$2"
             shift 2
             ;;
         -h|--help)
-            echo "Usage: $0 [OPTIONS] [--strategy STRATEGIES...]"
+            echo "Usage: $0 [OPTIONS] [--strategy STRATEGIES...] [--market MARKETS...]"
             echo ""
             echo "Options:"
             echo "  --use-cached-data      Skip data collection, use existing cached data"
             echo "  --data-only           Only collect data, skip backtesting"
             echo "  --config FILE         Configuration file (default: config/config_backtesting.json)"
             echo "  --strategy STRATEGIES  Run specific strategies or 'all' for all strategies"
+            echo "  --market MARKETS      Run specific markets or 'all' for all markets"
             echo "  -h, --help            Show this help message"
             echo ""
             echo "Available strategies:"
             echo "  basic_momentum, vwap, bollinger_bands, advanced_vwap"
             echo "  mean_reversion, macd, stochastic, pairs"
             echo ""
+            echo "Available markets (examples):"
+            echo "  KRW-BTC, KRW-ETH, KRW-XRP, KRW-ADA, KRW-SOL, KRW-DOT"
+            echo ""
             echo "Examples:"
-            echo "  $0                                          # Run default strategies from config"
+            echo "  $0                                          # Run default strategies from config on all markets"
             echo "  $0 --use-cached-data                       # Run default strategies with cached data"
-            echo "  $0 --strategy all                           # Run all available strategies"
-            echo "  $0 --strategy vwap macd                     # Run VWAP and MACD strategies only"
+            echo "  $0 --strategy all --market all             # Run all strategies on all markets"
+            echo "  $0 --strategy vwap --market KRW-BTC        # Run VWAP strategy on BTC only"
+            echo "  $0 --strategy all --market KRW-ADA KRW-DOT # Run all strategies on specific markets"
             echo "  $0 --config config/strategies/vwap.json    # Use specific config file"
             exit 0
             ;;
@@ -95,6 +108,15 @@ else
     echo "Strategies: ${STRATEGIES[*]}"
 fi
 
+# Display market selection
+if [ ${#MARKETS[@]} -eq 0 ]; then
+    echo "Markets: Using default markets from config file"
+elif [[ " ${MARKETS[@]} " =~ " all " ]]; then
+    echo "Markets: ALL markets from config file will be tested"
+else
+    echo "Markets: ${MARKETS[*]}"
+fi
+
 # Create necessary directories
 mkdir -p data
 mkdir -p results
@@ -122,11 +144,16 @@ if [ ${#STRATEGIES[@]} -gt 0 ]; then
     CMD_ARGS="$CMD_ARGS --strategy ${STRATEGIES[*]}"
 fi
 
+# Add market arguments
+if [ ${#MARKETS[@]} -gt 0 ]; then
+    CMD_ARGS="$CMD_ARGS --market ${MARKETS[*]}"
+fi
+
 # Add config file
 CMD_ARGS="$CMD_ARGS --config $CONFIG_FILE"
 
 # Execute the backtesting
-python3 src/actions/backtest.py $CMD_ARGS
+python3 src/actions/backtest_market.py $CMD_ARGS
 
 echo ""
 if [ "$DATA_ONLY" = true ]; then

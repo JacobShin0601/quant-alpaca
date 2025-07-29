@@ -8,7 +8,7 @@
     "database_pattern": "{market}_candles.db"
   },
   "backtesting": {
-    "initial_balance": 1000000,
+    "initial_balance": 3000000,
     "fees": {
       "limit_order": {
         "krw_market": 0.0005,
@@ -25,7 +25,7 @@
       "limit_order": 0.0000,
       "market_order": 0.0005
     },
-    "max_positions": 3,
+    "max_positions": 4,
     "order_type": "limit"
   },
   "strategies": {
@@ -45,6 +45,50 @@
         "rsi_oversold": 30,
         "ma_short": 20,
         "ma_long": 50
+      },
+      "vwap": {
+        "vwap_period": 20,
+        "vwap_short_period": 10,
+        "volume_threshold": 1.5
+      },
+      "bollinger_bands": {
+        "bb_period": 20,
+        "bb_std_dev": 2.0,
+        "volume_threshold": 1.2
+      },
+      "advanced_vwap": {
+        "vwap_period": 20,
+        "vwap_std_dev": 2.0,
+        "adx_period": 14,
+        "adx_threshold": 25,
+        "volume_threshold": 1.5,
+        "volatility_threshold": 0.02
+      },
+      "mean_reversion": {
+        "bb_period": 20,
+        "bb_std_dev": 2.0,
+        "z_score_threshold": 2.0,
+        "lookback_period": 50,
+        "volume_threshold": 1.0
+      },
+      "macd": {
+        "fast_period": 12,
+        "slow_period": 26,
+        "signal_period": 9,
+        "histogram_threshold": 0.0002
+      },
+      "stochastic": {
+        "k_period": 14,
+        "d_period": 3,
+        "smooth_k": 3,
+        "overbought": 80,
+        "oversold": 20
+      },
+      "pairs": {
+        "correlation_period": 30,
+        "correlation_threshold": 0.7,
+        "z_score_threshold": 2.0,
+        "lookback_period": 20
       }
     }
   },

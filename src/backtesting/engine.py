@@ -27,6 +27,12 @@ class BacktestEngine:
         self.portfolio_value_history = []
         self.trade_history = []
         
+        # Logging control
+        self.trade_count = 0
+        self.max_log_trades = 10  # Only log first 10 trades
+        self.total_timestamps = 0
+        self.processed_timestamps = 0
+        
         # Setup logging
         logging.basicConfig(level=getattr(logging, config['execution']['log_level']))
         self.logger = logging.getLogger(__name__)
@@ -73,15 +79,23 @@ class BacktestEngine:
         
         if signal == 1:  # Buy
             if len(self.positions) < self.max_positions:
-                # Calculate position size (equal weight)
-                position_value = self.cash * 0.9 / self.max_positions  # Leave 10% cash buffer
+                # Calculate position size based on available positions
+                current_positions = len(self.positions)
+                remaining_slots = self.max_positions - current_positions
+                
+                # Allocate cash more conservatively
+                # Use 80% of cash, divided by remaining slots
+                if remaining_slots > 0:
+                    position_value = (self.cash * 0.8) / remaining_slots
+                else:
+                    return  # No slots available
                 
                 # Apply slippage and fees
                 execution_price = price * (1 + slippage_rate)
                 quantity = position_value / execution_price
                 cost = quantity * execution_price * (1 + fee_rate)
                 
-                if cost <= self.cash:
+                if cost <= self.cash and cost > self.initial_balance * 0.001:  # Min position size 0.1% of initial
                     self.cash -= cost
                     self.positions[market] = self.positions.get(market, 0) + quantity
                     
@@ -98,7 +112,14 @@ class BacktestEngine:
                         'order_type': self.order_type
                     })
                     
-                    self.logger.info(f"BUY {market}: {quantity:.6f} at {execution_price:.2f} (fee: {fee_rate*100:.3f}%)")
+                    # Convert timestamp to string format
+                    if hasattr(timestamp, 'strftime'):
+                        ts_str = timestamp.strftime('%Y-%m-%d %H:%M')
+                    else:
+                        ts_str = pd.to_datetime(timestamp).strftime('%Y-%m-%d %H:%M')
+                    self.trade_count += 1
+                    if self.trade_count <= self.max_log_trades:
+                        self.logger.info(f"[{ts_str}] BUY {market}: {quantity:.6f} at {execution_price:.2f} (fee: {fee_rate*100:.3f}%)")
         
         elif signal == -1 and market in self.positions and self.positions[market] > 0:  # Sell
             quantity = self.positions[market]
@@ -108,7 +129,7 @@ class BacktestEngine:
             proceeds = quantity * execution_price * (1 - fee_rate)
             
             self.cash += proceeds
-            self.positions[market] = 0
+            del self.positions[market]  # Remove position completely
             
             self.trade_history.append({
                 'timestamp': timestamp,
@@ -123,7 +144,14 @@ class BacktestEngine:
                 'order_type': self.order_type
             })
             
-            self.logger.info(f"SELL {market}: {quantity:.6f} at {execution_price:.2f} (fee: {fee_rate*100:.3f}%)")
+            # Convert timestamp to string format
+            if hasattr(timestamp, 'strftime'):
+                ts_str = timestamp.strftime('%Y-%m-%d %H:%M')
+            else:
+                ts_str = pd.to_datetime(timestamp).strftime('%Y-%m-%d %H:%M')
+            self.trade_count += 1
+            if self.trade_count <= self.max_log_trades:
+                self.logger.info(f"[{ts_str}] SELL {market}: {quantity:.6f} at {execution_price:.2f} (fee: {fee_rate*100:.3f}%)")
     
     def calculate_portfolio_value(self, current_prices: Dict[str, float]) -> float:
         """Calculate current portfolio value"""
@@ -144,6 +172,7 @@ class BacktestEngine:
         for market, df in data.items():
             df_copy = df.copy()
             df_copy = self.calculate_indicators(df_copy)
+            # Generate initial signals
             df_copy = self.generate_signals(df_copy, market)
             prepared_data[market] = df_copy
         
@@ -153,9 +182,21 @@ class BacktestEngine:
             all_timestamps.update(df.index)
         
         sorted_timestamps = sorted(list(all_timestamps))
+        self.total_timestamps = len(sorted_timestamps)
         
         # Run backtest
-        for timestamp in sorted_timestamps:
+        last_progress = -1
+        for i, timestamp in enumerate(sorted_timestamps):
+            self.processed_timestamps = i + 1
+            
+            # Show progress every 10%
+            progress = int((i / self.total_timestamps) * 100)
+            if progress % 10 == 0 and progress != last_progress:
+                if self.trade_count > self.max_log_trades:
+                    active_positions = len([p for p in self.positions.values() if p > 0])
+                    self.logger.info(f"Progress: {progress}% - Trades: {self.trade_count}, Cash: ₩{self.cash:,.0f}, Positions: {active_positions}")
+                last_progress = progress
+            
             current_prices = {}
             
             # Process each market at this timestamp
@@ -164,9 +205,23 @@ class BacktestEngine:
                     row = df.loc[timestamp]
                     current_prices[market] = row['trade_price']
                     
-                    # Execute trade if signal exists
-                    if not pd.isna(row['signal']) and row['signal'] != 0:
-                        self.execute_trade(market, int(row['signal']), row['trade_price'], timestamp)
+                    # Check position status
+                    has_position = market in self.positions and self.positions[market] > 0
+                    
+                    # Get signal from pre-calculated signals
+                    signal = row['signal']
+                    
+                    # Apply position-aware filtering
+                    if signal == 1 and has_position:
+                        # Already have position, skip buy signal
+                        signal = 0
+                    elif signal == -1 and not has_position:
+                        # No position to sell, skip sell signal  
+                        signal = 0
+                    
+                    # Execute trade if valid signal
+                    if signal != 0:
+                        self.execute_trade(market, int(signal), row['trade_price'], timestamp)
             
             # Record portfolio value
             portfolio_value = self.calculate_portfolio_value(current_prices)
@@ -179,7 +234,12 @@ class BacktestEngine:
         
         # Calculate results
         results = self.calculate_results()
-        self.logger.info("Backtest completed!")
+        
+        # Final summary
+        if self.trade_count > self.max_log_trades:
+            self.logger.info(f"... ({self.trade_count - self.max_log_trades} more trades not shown)")
+        
+        self.logger.info(f"Backtest completed! Total trades: {self.trade_count}")
         
         return results
     
@@ -200,11 +260,20 @@ class BacktestEngine:
         volatility = daily_returns.std() * np.sqrt(365 * 24 * 60)  # Annualized for minute data
         sharpe_ratio = (daily_returns.mean() * 365 * 24 * 60) / volatility if volatility > 0 else 0
         
+        # Sortino Ratio (downside deviation)
+        downside_returns = daily_returns[daily_returns < 0]
+        downside_deviation = downside_returns.std() * np.sqrt(365 * 24 * 60) if len(downside_returns) > 0 else 0
+        sortino_ratio = (daily_returns.mean() * 365 * 24 * 60) / downside_deviation if downside_deviation > 0 else 0
+        
         # Drawdown
         portfolio_series = pd.Series(portfolio_values)
         running_max = portfolio_series.expanding().max()
         drawdown = (portfolio_series - running_max) / running_max
         max_drawdown = drawdown.min()
+        
+        # Calmar Ratio (annualized return / max drawdown)
+        annualized_return = total_return * (365 * 24 * 60 / len(daily_returns)) if len(daily_returns) > 0 else 0
+        calmar_ratio = abs(annualized_return / max_drawdown) if max_drawdown < 0 else 0
         
         results = {
             'initial_balance': self.initial_balance,
@@ -213,6 +282,8 @@ class BacktestEngine:
             'total_return_pct': total_return * 100,
             'volatility': volatility,
             'sharpe_ratio': sharpe_ratio,
+            'sortino_ratio': sortino_ratio,
+            'calmar_ratio': calmar_ratio,
             'max_drawdown': max_drawdown,
             'max_drawdown_pct': max_drawdown * 100,
             'total_trades': len(self.trade_history),

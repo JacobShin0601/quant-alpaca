@@ -30,17 +30,20 @@
   },
   "strategy": {
     "name": "vwap",
+    "description": "VWAP trend following strategy optimized for trending markets",
     "parameters": {
-      "vwap_period": 30,
-      "vwap_short_period": 15,
+      "vwap_period": 20,
+      "vwap_short_period": 10,
       "vwap_threshold": 0.003,
-      "volume_threshold": 1.5,
-      "momentum_threshold": 0.015,
+      "volume_threshold": 1.2,
+      "momentum_threshold": 0.01,
       "strategy_variant": "trend_following",
-      "use_vwap_bands": false,
+      "use_vwap_bands": true,
+      "vwap_std_period": 20,
+      "vwap_std_multiplier": 2.0,
       "volume_period": 20,
       "use_momentum": true,
-      "momentum_period": 10,
+      "momentum_period": 14,
       "use_price_filter": true,
       "min_price": 1000
     }

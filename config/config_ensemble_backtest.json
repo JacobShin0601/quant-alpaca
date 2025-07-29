@@ -1,0 +1,69 @@
+{
+  "data": {
+    "end_date": "2025-07-27", 
+    "lookback_days": 60,
+    "markets": ["KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-ADA", "KRW-DOT"],
+    "candle_unit": 1,
+    "database_directory": "data/candles",
+    "database_pattern": "{market}_candles.db"
+  },
+  "backtesting": {
+    "initial_balance": 3000000,
+    "fees": {
+      "limit_order": {
+        "krw_market": 0.0005,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      },
+      "market_order": {
+        "krw_market": 0.0005,
+        "btc_market": 0.0025,
+        "usdt_market": 0.0025
+      }
+    },
+    "slippage": {
+      "limit_order": 0.0000,
+      "market_order": 0.0005
+    },
+    "max_positions": 4,
+    "order_type": "limit"
+  },
+  "strategy": {
+    "name": "ensemble",
+    "description": "Dynamic ensemble strategy based on market regime detection",
+    "parameters": {
+      "config_path": "config/strategies/ensemble_config.json",
+      "regime_config": {
+        "adx_period": 14,
+        "ma_periods": [10, 20, 50, 100],
+        "bb_period": 20,
+        "bb_std": 2,
+        "atr_period": 14,
+        "volume_period": 20,
+        "choppiness_period": 14,
+        "lookback_period": 100,
+        "adx_trend_threshold": 25,
+        "adx_strong_threshold": 40,
+        "volatility_high_threshold": 2.0,
+        "volatility_low_threshold": 0.5,
+        "volume_spike_threshold": 2.0,
+        "choppiness_sideways_threshold": 61.8
+      }
+    }
+  },
+  "strategies": {
+    "run_all_available": false,
+    "default_list": ["ensemble"],
+    "parameters": {
+      "ensemble": {
+        "config_path": "config/strategies/ensemble_config.json"
+      }
+    }
+  },
+  "execution": {
+    "start_time": "09:00:00",
+    "end_time": "23:30:00",
+    "timezone": "Asia/Seoul",
+    "log_level": "INFO"
+  }
+}

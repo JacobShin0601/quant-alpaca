@@ -1,0 +1,163 @@
+{
+  "regime_strategies": {
+    "trending_up": {
+      "description": "Strong upward trend - follow momentum",
+      "primary": ["vwap_trend_following", "advanced_vwap_momentum"],
+      "secondary": ["basic_momentum"],
+      "weights": {
+        "primary": 0.7,
+        "secondary": 0.3
+      },
+      "risk_multiplier": 1.2,
+      "characteristics": "High directional confidence, use trend-following strategies"
+    },
+    "trending_down": {
+      "description": "Downward trend - mean reversion and careful entries",
+      "primary": ["mean_reversion", "vwap_mean_reversion"],
+      "secondary": ["bollinger_bands"],
+      "weights": {
+        "primary": 0.6,
+        "secondary": 0.4
+      },
+      "risk_multiplier": 0.8,
+      "characteristics": "Look for oversold bounces, reduced position sizes"
+    },
+    "sideways": {
+      "description": "Range-bound market - mean reversion dominant",
+      "primary": ["mean_reversion", "bollinger_bands"],
+      "secondary": ["stochastic"],
+      "weights": {
+        "primary": 0.6,
+        "secondary": 0.4
+      },
+      "risk_multiplier": 1.0,
+      "characteristics": "Trade range boundaries, fade extremes"
+    },
+    "volatile": {
+      "description": "High volatility - defensive positioning",
+      "primary": ["advanced_vwap_bands"],
+      "secondary": ["bollinger_bands"],
+      "weights": {
+        "primary": 0.5,
+        "secondary": 0.5
+      },
+      "risk_multiplier": 0.6,
+      "characteristics": "Wider stops, smaller positions, wait for extremes"
+    }
+  },
+  "transition_rules": {
+    "min_regime_duration": 10,
+    "confidence_threshold": 0.6,
+    "smooth_transition": true,
+    "transition_periods": 5,
+    "regime_persistence": 0.7
+  },
+  "risk_management": {
+    "base_position_size": 0.25,
+    "max_positions": 3,
+    "stop_loss_multiplier": {
+      "trending_up": 1.5,
+      "trending_down": 1.0,
+      "sideways": 0.8,
+      "volatile": 0.6
+    },
+    "take_profit_multiplier": {
+      "trending_up": 2.0,
+      "trending_down": 1.2,
+      "sideways": 1.0,
+      "volatile": 0.8
+    },
+    "position_sizing": {
+      "kelly_fraction": 0.25,
+      "max_leverage": 1.0,
+      "volatility_adjustment": true
+    }
+  },
+  "performance_tracking": {
+    "evaluate_period": 100,
+    "min_trades_for_evaluation": 10,
+    "strategy_rotation": true,
+    "underperform_threshold": -0.05,
+    "outperform_bonus": 0.1
+  },
+  "regime_detection": {
+    "method": "ensemble",
+    "update_frequency": 1,
+    "lookback_periods": {
+      "short": 20,
+      "medium": 50,
+      "long": 100
+    },
+    "indicators": {
+      "adx": {
+        "period": 14,
+        "trend_threshold": 25,
+        "strong_threshold": 40
+      },
+      "volatility": {
+        "atr_period": 14,
+        "bb_period": 20,
+        "high_threshold": 2.0,
+        "low_threshold": 0.5
+      },
+      "volume": {
+        "period": 20,
+        "spike_threshold": 2.0
+      },
+      "choppiness": {
+        "period": 14,
+        "sideways_threshold": 61.8
+      }
+    }
+  },
+  "strategy_parameters": {
+    "vwap_trend_following": {
+      "file": "config/strategies/vwap_trend_following.json",
+      "regime_adjustments": {
+        "trending_up": {"vwap_threshold": 0.003},
+        "trending_down": {"vwap_threshold": 0.008},
+        "sideways": {"vwap_threshold": 0.005},
+        "volatile": {"vwap_threshold": 0.010}
+      }
+    },
+    "vwap_mean_reversion": {
+      "file": "config/strategies/vwap_mean_reversion.json",
+      "regime_adjustments": {
+        "trending_up": {"vwap_threshold": 0.008},
+        "trending_down": {"vwap_threshold": 0.005},
+        "sideways": {"vwap_threshold": 0.003},
+        "volatile": {"vwap_threshold": 0.010}
+      }
+    },
+    "advanced_vwap_momentum": {
+      "file": "config/strategies/advanced_vwap_momentum.json",
+      "regime_adjustments": {
+        "trending_up": {"adx_threshold": 20},
+        "trending_down": {"adx_threshold": 30},
+        "sideways": {"adx_threshold": 25},
+        "volatile": {"adx_threshold": 20}
+      }
+    },
+    "advanced_vwap_bands": {
+      "file": "config/strategies/advanced_vwap_bands.json",
+      "regime_adjustments": {
+        "trending_up": {"vwap_std_multiplier": 2.0},
+        "trending_down": {"vwap_std_multiplier": 1.5},
+        "sideways": {"vwap_std_multiplier": 1.5},
+        "volatile": {"vwap_std_multiplier": 2.5}
+      }
+    }
+  },
+  "market_filters": {
+    "min_volume_usd": 50000,
+    "min_price_usd": 0.01,
+    "max_spread_pct": 0.5,
+    "require_liquidity": true
+  },
+  "logging": {
+    "regime_changes": true,
+    "strategy_signals": true,
+    "performance_updates": true,
+    "trade_analysis": true
+  }
+}

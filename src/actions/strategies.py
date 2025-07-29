@@ -19,10 +19,53 @@ class BaseStrategy(ABC):
     def generate_signals(self, df: pd.DataFrame, market: str) -> pd.DataFrame:
         """Generate buy/sell signals"""
         pass
+    
+    def generate_signal_for_timestamp(self, df: pd.DataFrame, market: str, has_position: bool) -> int:
+        """Generate signal for a specific timestamp considering current position"""
+        # Default implementation - use the last row's signal
+        if len(df) == 0:
+            return 0
+        
+        # Get the last row
+        last_row = df.iloc[-1]
+        
+        # Basic position-aware logic
+        if has_position:
+            # Only allow sell signals when we have a position
+            return -1 if self._should_sell(last_row, df) else 0
+        else:
+            # Only allow buy signals when we don't have a position
+            return 1 if self._should_buy(last_row, df) else 0
+    
+    def _should_buy(self, last_row, df) -> bool:
+        """Override in subclass to implement buy logic"""
+        return False
+    
+    def _should_sell(self, last_row, df) -> bool:
+        """Override in subclass to implement sell logic"""
+        return False
 
 
 class BasicMomentumStrategy(BaseStrategy):
     """Basic momentum strategy using RSI and moving averages"""
+    
+    def _should_buy(self, last_row, df) -> bool:
+        """Buy when RSI is oversold and short MA > long MA"""
+        if pd.isna(last_row['rsi']) or pd.isna(last_row['ma_short']) or pd.isna(last_row['ma_long']):
+            return False
+        return (
+            last_row['rsi'] < self.parameters['rsi_oversold'] and
+            last_row['ma_short'] > last_row['ma_long']
+        )
+    
+    def _should_sell(self, last_row, df) -> bool:
+        """Sell when RSI is overbought or short MA < long MA"""
+        if pd.isna(last_row['rsi']) or pd.isna(last_row['ma_short']) or pd.isna(last_row['ma_long']):
+            return False
+        return (
+            last_row['rsi'] > self.parameters['rsi_overbought'] or
+            last_row['ma_short'] < last_row['ma_long']
+        )
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate RSI and moving averages"""
@@ -66,6 +109,32 @@ class BasicMomentumStrategy(BaseStrategy):
 
 class VWAPStrategy(BaseStrategy):
     """VWAP (Volume Weighted Average Price) strategy with multiple timeframes"""
+    
+    def _should_buy(self, last_row, df) -> bool:
+        """Buy when price is below VWAP with high volume"""
+        if pd.isna(last_row.get('vwap_deviation', np.nan)) or pd.isna(last_row.get('volume_ratio', np.nan)):
+            return False
+        
+        vwap_threshold = self.parameters.get('vwap_threshold', 0.005)
+        volume_threshold = self.parameters.get('volume_threshold', 1.2)
+        
+        return (
+            last_row['vwap_deviation'] < -vwap_threshold and
+            last_row['volume_ratio'] > volume_threshold
+        )
+    
+    def _should_sell(self, last_row, df) -> bool:
+        """Sell when price is above VWAP with high volume"""
+        if pd.isna(last_row.get('vwap_deviation', np.nan)) or pd.isna(last_row.get('volume_ratio', np.nan)):
+            return False
+        
+        vwap_threshold = self.parameters.get('vwap_threshold', 0.005)
+        volume_threshold = self.parameters.get('volume_threshold', 1.2)
+        
+        return (
+            last_row['vwap_deviation'] > vwap_threshold and
+            last_row['volume_ratio'] > volume_threshold
+        )
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate VWAP and related indicators"""
@@ -792,6 +861,28 @@ class PairsStrategy(BaseStrategy):
         return df
 
 
+# Import ensemble strategy if available
+ensemble_available = False
+try:
+    # For when strategies.py is imported as a module
+    from .ensemble_strategy import EnsembleStrategy
+    ensemble_available = True
+except ImportError:
+    try:
+        # For when running directly
+        from ensemble_strategy import EnsembleStrategy
+        ensemble_available = True
+    except ImportError:
+        try:
+            # For when imported from backtesting
+            import sys
+            import os
+            sys.path.append(os.path.dirname(__file__))
+            from ensemble_strategy import EnsembleStrategy
+            ensemble_available = True
+        except ImportError:
+            pass
+
 # Strategy registry
 STRATEGIES = {
     'basic_momentum': BasicMomentumStrategy,
@@ -803,6 +894,10 @@ STRATEGIES = {
     'stochastic': StochasticStrategy,
     'pairs': PairsStrategy,
 }
+
+# Add ensemble strategy if available
+if ensemble_available:
+    STRATEGIES['ensemble'] = EnsembleStrategy
 
 
 def get_strategy(strategy_name: str, parameters: Dict[str, Any]) -> BaseStrategy:

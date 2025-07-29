@@ -24,7 +24,7 @@ class UpbitDataScrapper:
         cursor = conn.cursor()
         
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS candles_1m (
+            CREATE TABLE IF NOT EXISTS candles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 market TEXT NOT NULL,
                 candle_date_time_utc TEXT NOT NULL,
@@ -36,14 +36,15 @@ class UpbitDataScrapper:
                 timestamp INTEGER NOT NULL,
                 candle_acc_trade_price REAL NOT NULL,
                 candle_acc_trade_volume REAL NOT NULL,
+                unit INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(market, candle_date_time_utc)
+                UNIQUE(market, candle_date_time_utc, unit)
             )
         ''')
         
         cursor.execute('''
             CREATE INDEX IF NOT EXISTS idx_market_datetime 
-            ON candles_1m(market, candle_date_time_utc)
+            ON candles(market, candle_date_time_utc)
         ''')
         
         conn.commit()
@@ -82,11 +83,11 @@ class UpbitDataScrapper:
         for candle in candles:
             try:
                 cursor.execute('''
-                    INSERT OR REPLACE INTO candles_1m 
+                    INSERT OR REPLACE INTO candles 
                     (market, candle_date_time_utc, candle_date_time_kst, 
                      opening_price, high_price, low_price, trade_price, 
-                     timestamp, candle_acc_trade_price, candle_acc_trade_volume)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     timestamp, candle_acc_trade_price, candle_acc_trade_volume, unit)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     market,
                     candle['candle_date_time_utc'],
@@ -97,7 +98,8 @@ class UpbitDataScrapper:
                     candle['trade_price'],
                     candle['timestamp'],
                     candle['candle_acc_trade_price'],
-                    candle['candle_acc_trade_volume']
+                    candle['candle_acc_trade_volume'],
+                    1  # unit value (1-minute candles)
                 ))
             except sqlite3.IntegrityError:
                 pass
@@ -200,7 +202,7 @@ class UpbitDataScrapper:
                 COUNT(*) as candle_count,
                 MIN(candle_date_time_utc) as oldest_data,
                 MAX(candle_date_time_utc) as latest_data
-            FROM candles_1m 
+            FROM candles 
             GROUP BY market 
             ORDER BY candle_count DESC
         '''
@@ -217,7 +219,7 @@ class UpbitDataScrapper:
         """데이터베이스에서 캔들 데이터 조회"""
         conn = sqlite3.connect(self.db_path)
         
-        query = "SELECT * FROM candles_1m WHERE market = ?"
+        query = "SELECT * FROM candles WHERE market = ?"
         params = [market]
         
         if start_date:
