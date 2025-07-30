@@ -57,12 +57,32 @@ class VaRRiskManager:
     
     def __init__(self, config: Optional[Dict] = None):
         """Initialize VaR risk manager"""
-        self.config = config or self._get_default_config()
+        # Start with default config
+        self.config = self._get_default_config()
+        
+        # Merge with provided config if available
+        if config:
+            # Handle both nested and flat config structures
+            if 'var_config' in config:
+                # Config already has the expected structure
+                self._merge_config(self.config, config)
+            else:
+                # Assume the config is meant for var_config section
+                self._merge_config(self.config['var_config'], config)
+                
         self.daily_pnl_history = []
         self.var_history = []
         self.daily_loss_tracker = {}  # Track intraday losses
         self.risk_limits_breached = False
         self.last_reset_time = None
+    
+    def _merge_config(self, base: Dict, override: Dict) -> None:
+        """Recursively merge override config into base config"""
+        for key, value in override.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                self._merge_config(base[key], value)
+            else:
+                base[key] = value
         
     def _get_default_config(self) -> Dict:
         """Default VaR risk management configuration"""
@@ -261,13 +281,30 @@ class VaRRiskManager:
         actions_config = self.config["actions"]
         
         # Reset daily tracker if new day
-        if self.last_reset_time is None or current_time.date() > self.last_reset_time.date():
+        # Handle both datetime and int timestamps
+        if isinstance(current_time, (int, float)):
+            current_dt = pd.to_datetime(current_time, unit='s')
+        else:
+            current_dt = current_time
+            
+        should_reset = False
+        if self.last_reset_time is None:
+            should_reset = True
+        else:
+            if isinstance(self.last_reset_time, (int, float)):
+                last_reset_dt = pd.to_datetime(self.last_reset_time, unit='s')
+            else:
+                last_reset_dt = self.last_reset_time
+            
+            should_reset = current_dt.date() > last_reset_dt.date()
+            
+        if should_reset:
             self.daily_loss_tracker = {
                 'daily_loss': 0,
                 'worst_loss': 0,
                 'breach_count': 0,
                 'trading_restricted': False,
-                'start_time': current_time
+                'start_time': current_time  # Store original format
             }
             self.last_reset_time = current_time
         
@@ -326,7 +363,19 @@ class VaRRiskManager:
                     positions_to_close = list(positions.keys())
         
         # Calculate time to reset
-        time_since_start = current_time - self.daily_loss_tracker['start_time']
+        # Handle both datetime and int timestamps
+        if isinstance(current_time, (int, float)):
+            current_dt = pd.to_datetime(current_time, unit='s')
+        else:
+            current_dt = current_time
+            
+        start_time = self.daily_loss_tracker['start_time']
+        if isinstance(start_time, (int, float)):
+            start_dt = pd.to_datetime(start_time, unit='s')
+        else:
+            start_dt = start_time
+            
+        time_since_start = current_dt - start_dt
         time_to_reset = timedelta(days=1) - time_since_start
         
         return RiskLimitStatus(

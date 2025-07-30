@@ -45,7 +45,15 @@ class MarketRegimeDetector:
     
     def __init__(self, config: Optional[Dict] = None):
         """Initialize regime detector with configuration"""
-        self.config = config or self._get_default_config()
+        # Always start with default config
+        default_config = self._get_default_config()
+        
+        # If config is provided, merge it with defaults
+        if config:
+            self.config = {**default_config, **config}
+        else:
+            self.config = default_config
+            
         self.regime_history = []
         self.indicators_history = []
         
@@ -109,6 +117,29 @@ class MarketRegimeDetector:
     
     def _calculate_indicators(self, df: pd.DataFrame) -> RegimeIndicators:
         """Calculate all regime detection indicators"""
+        # Check if we have minimum data
+        if len(df) < 50:
+            # Return default indicators for insufficient data
+            return RegimeIndicators(
+                adx=0.0,
+                adx_plus_di=0.0,
+                adx_minus_di=0.0,
+                ma_alignment_score=0.0,
+                volatility_ratio=1.0,
+                bb_width_pct=0.0,
+                volume_ratio=1.0,
+                choppiness_index=50.0,
+                returns_skewness=0.0,
+                returns_kurtosis=0.0,
+                trend_strength=0.0,
+                regime_probability={
+                    'trending_up': 0.25,
+                    'trending_down': 0.25,
+                    'sideways': 0.25,
+                    'volatile': 0.25
+                }
+            )
+            
         # ADX and directional indicators
         adx_data = self._calculate_adx(df)
         
@@ -156,9 +187,14 @@ class MarketRegimeDetector:
         period = self.config['adx_period']
         
         # True Range
-        high_low = df['high_price'] - df['low_price']
-        high_close = abs(df['high_price'] - df['trade_price'].shift(1))
-        low_close = abs(df['low_price'] - df['trade_price'].shift(1))
+        # Determine column names
+        high_col = 'high_price' if 'high_price' in df.columns else 'high'
+        low_col = 'low_price' if 'low_price' in df.columns else 'low'
+        price_col = 'trade_price' if 'trade_price' in df.columns else 'close'
+        
+        high_low = df[high_col] - df[low_col]
+        high_close = abs(df[high_col] - df[price_col].shift(1))
+        low_close = abs(df[low_col] - df[price_col].shift(1))
         
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr = tr.rolling(window=period).mean()
@@ -209,8 +245,12 @@ class MarketRegimeDetector:
         periods = self.config['ma_periods']
         mas = {}
         
+        # Determine price column
+        price_col = 'trade_price' if 'trade_price' in df.columns else 'close'
+        
         for period in periods:
-            mas[period] = df['trade_price'].rolling(window=period).mean().iloc[-1]
+            ma_series = df[price_col].rolling(window=period).mean()
+            mas[period] = ma_series.iloc[-1] if len(ma_series) > 0 and not ma_series.empty else 0
         
         # Check alignment
         sorted_periods = sorted(periods)
@@ -235,8 +275,11 @@ class MarketRegimeDetector:
         std_mult = self.config['bb_std']
         
         # Bollinger Bands
-        sma = df['trade_price'].rolling(window=period).mean()
-        std = df['trade_price'].rolling(window=period).std()
+        # Determine price column
+        price_col = 'trade_price' if 'trade_price' in df.columns else 'close'
+        
+        sma = df[price_col].rolling(window=period).mean()
+        std = df[price_col].rolling(window=period).std()
         
         upper_band = sma + (std * std_mult)
         lower_band = sma - (std * std_mult)
@@ -247,9 +290,14 @@ class MarketRegimeDetector:
         # ATR-based volatility
         atr_period = self.config['atr_period']
         
-        high_low = df['high_price'] - df['low_price']
-        high_close = abs(df['high_price'] - df['trade_price'].shift(1))
-        low_close = abs(df['low_price'] - df['trade_price'].shift(1))
+        # Determine column names
+        high_col = 'high_price' if 'high_price' in df.columns else 'high'
+        low_col = 'low_price' if 'low_price' in df.columns else 'low'
+        price_col = 'trade_price' if 'trade_price' in df.columns else 'close'
+        
+        high_low = df[high_col] - df[low_col]
+        high_close = abs(df[high_col] - df[price_col].shift(1))
+        low_close = abs(df[low_col] - df[price_col].shift(1))
         
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr = tr.rolling(window=atr_period).mean()
@@ -270,9 +318,15 @@ class MarketRegimeDetector:
         """Calculate volume ratio (current vs average)"""
         period = self.config['volume_period']
         
-        volume_ma = df['candle_acc_trade_volume'].rolling(window=period).mean()
-        current_volume = df['candle_acc_trade_volume'].iloc[-1]
-        avg_volume = volume_ma.iloc[-1] if not volume_ma.empty else current_volume
+        # Determine volume column
+        volume_col = 'candle_acc_trade_volume' if 'candle_acc_trade_volume' in df.columns else 'volume'
+        
+        if volume_col not in df.columns or len(df) == 0:
+            return 1.0
+            
+        volume_ma = df[volume_col].rolling(window=period).mean()
+        current_volume = df[volume_col].iloc[-1] if len(df) > 0 else 0
+        avg_volume = volume_ma.iloc[-1] if len(volume_ma) > 0 and not volume_ma.empty else current_volume
         
         return current_volume / avg_volume if avg_volume > 0 else 1
     
@@ -284,16 +338,21 @@ class MarketRegimeDetector:
         period = self.config.get('choppiness_period', 14)  # Default to 14
         
         # True Range sum
-        high_low = df['high_price'] - df['low_price']
-        high_close = abs(df['high_price'] - df['trade_price'].shift(1))
-        low_close = abs(df['low_price'] - df['trade_price'].shift(1))
+        # Determine column names
+        high_col = 'high_price' if 'high_price' in df.columns else 'high'
+        low_col = 'low_price' if 'low_price' in df.columns else 'low'
+        price_col = 'trade_price' if 'trade_price' in df.columns else 'close'
+        
+        high_low = df[high_col] - df[low_col]
+        high_close = abs(df[high_col] - df[price_col].shift(1))
+        low_close = abs(df[low_col] - df[price_col].shift(1))
         
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr_sum = tr.rolling(window=period).sum()
         
         # High-Low range
-        high_max = df['high_price'].rolling(window=period).max()
-        low_min = df['low_price'].rolling(window=period).min()
+        high_max = df[high_col].rolling(window=period).max()
+        low_min = df[low_col].rolling(window=period).min()
         range_hl = high_max - low_min
         
         # Choppiness Index
@@ -303,7 +362,10 @@ class MarketRegimeDetector:
     
     def _calculate_statistical_properties(self, df: pd.DataFrame) -> Dict[str, float]:
         """Calculate statistical properties of returns"""
-        returns = df['trade_price'].pct_change().dropna()
+        # Determine price column
+        price_col = 'trade_price' if 'trade_price' in df.columns else 'close'
+        
+        returns = df[price_col].pct_change().dropna()
         
         if len(returns) < 20:
             return {'skewness': 0, 'kurtosis': 0}
@@ -323,7 +385,10 @@ class MarketRegimeDetector:
         if lookback < 10:
             return 0
         
-        prices = df['trade_price'].tail(lookback).values
+        # Determine price column
+        price_col = 'trade_price' if 'trade_price' in df.columns else 'close'
+        
+        prices = df[price_col].tail(lookback).values
         x = np.arange(len(prices))
         
         # Linear regression

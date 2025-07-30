@@ -545,11 +545,20 @@ class MultiStrategyBacktester:
         
         print(f"\n🔧 Optimizing {strategy_name} strategy...")
         
-        # Initialize optimizer
-        optimizer = StrategyOptimizer()
+        # Initialize optimizer with the same config file
+        optimizer = StrategyOptimizer(config_path=self.config_path)
         
         # Prepare data for optimization
-        all_data = pd.concat(list(market_data.values()), ignore_index=True)
+        # Combine all market data while preserving datetime index
+        market_dfs = []
+        for market, df in market_data.items():
+            df_copy = df.copy()
+            df_copy['market'] = market
+            market_dfs.append(df_copy)
+        
+        all_data = pd.concat(market_dfs, axis=0)
+        # Sort by index to ensure chronological order
+        all_data.sort_index(inplace=True)
         markets = list(market_data.keys())
         
         # Run optimization
@@ -600,15 +609,16 @@ class MultiStrategyBacktester:
                 print(f"\n{'='*60}")
                 print(f"Running backtest for {market}")
                 print(f"{'='*60}")
-                self._run_single_market_backtest(strategies, [market], use_cached_data, data_only)
+                self._run_single_market_backtest(strategies, [market], use_cached_data, data_only, optimize_strategy, train_ratio)
         else:
             # Run combined backtest
-            self._run_single_market_backtest(strategies, selected_markets, use_cached_data, data_only)
+            self._run_single_market_backtest(strategies, selected_markets, use_cached_data, data_only, optimize_strategy, train_ratio)
         
         return True
     
     def _run_single_market_backtest(self, strategies: List[str], markets: List[str], 
-                                   use_cached_data: bool = False, data_only: bool = False):
+                                   use_cached_data: bool = False, data_only: bool = False,
+                                   optimize_strategy: str = None, train_ratio: float = 0.7):
         """Run backtest for a single market or all markets combined"""
         print("=" * 60)
         print("=� MULTI-STRATEGY BACKTESTING SYSTEM")

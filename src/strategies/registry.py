@@ -26,7 +26,9 @@ ensemble_available = False
 try:
     from .ensemble import EnsembleStrategy
     ensemble_available = True
-except ImportError:
+except ImportError as e:
+    import sys
+    print(f"Warning: Could not import ensemble strategy in registry: {e}", file=sys.stderr)
     pass
 
 # Strategy registry

@@ -206,7 +206,8 @@ class RegimePerformanceAnalyzer:
                                 regime_trades: List[Dict],
                                 portfolio_history: List[Dict],
                                 regime_history: List[Dict],
-                                regime: MarketRegime) -> RegimePerformanceMetrics:
+                                regime: MarketRegime,
+                                group_by: str = None) -> RegimePerformanceMetrics:
         """Calculate performance metrics for a specific regime"""
         
         # Filter portfolio history for this regime
@@ -220,7 +221,8 @@ class RegimePerformanceAnalyzer:
         
         # Calculate trade statistics
         buy_trades = [t for t in regime_trades if t['side'] == 'buy']
-        sell_trades = [t for t in regime_trades if t['side'] == 'sell']
+        # Include both regular sells and stop order sells
+        sell_trades = [t for t in regime_trades if t['side'] == 'sell' or (t.get('action', '').endswith('_sell'))]
         
         # Match buy/sell pairs to calculate P&L
         trade_pnls = []
@@ -234,7 +236,7 @@ class RegimePerformanceAnalyzer:
             
             if trade['side'] == 'buy':
                 positions[market].append(trade)
-            elif trade['side'] == 'sell' and positions[market]:
+            elif (trade['side'] == 'sell' or trade.get('action', '').endswith('_sell')) and positions[market]:
                 # Match with oldest buy
                 buy_trade = positions[market].pop(0)
                 
@@ -244,13 +246,30 @@ class RegimePerformanceAnalyzer:
                 pnl = sell_proceeds - buy_cost
                 pnl_pct = pnl / buy_cost
                 
+                # Handle timestamp differences for holding period
+                buy_ts = buy_trade['timestamp']
+                sell_ts = trade['timestamp']
+                
+                # Convert to timestamps if needed
+                if isinstance(buy_ts, (int, float)):
+                    buy_time = pd.to_datetime(buy_ts, unit='s')
+                else:
+                    buy_time = pd.to_datetime(buy_ts)
+                    
+                if isinstance(sell_ts, (int, float)):
+                    sell_time = pd.to_datetime(sell_ts, unit='s')
+                else:
+                    sell_time = pd.to_datetime(sell_ts)
+                
+                holding_period = sell_time - buy_time
+                
                 trade_pnls.append({
                     'pnl': pnl,
                     'pnl_pct': pnl_pct,
-                    'holding_period': trade['timestamp'] - buy_trade['timestamp']
+                    'holding_period': holding_period
                 })
                 
-                holding_periods.append(trade['timestamp'] - buy_trade['timestamp'])
+                holding_periods.append(holding_period)
         
         # Calculate metrics
         winning_trades = sum(1 for tp in trade_pnls if tp['pnl'] > 0)
@@ -266,8 +285,13 @@ class RegimePerformanceAnalyzer:
         returns = [tp['pnl_pct'] for tp in trade_pnls]
         pnls = [tp['pnl'] for tp in trade_pnls]
         
-        total_return = sum(returns)
-        average_return = np.mean(returns) if returns else 0
+        # Calculate compounded total return
+        total_return = 1.0
+        for ret in returns:
+            total_return *= (1 + ret)
+        total_return = (total_return - 1) * 100  # Convert to percentage
+        
+        average_return = np.mean(returns) * 100 if returns else 0  # Convert to percentage
         total_pnl = sum(pnls)
         average_pnl = np.mean(pnls) if pnls else 0
         
@@ -322,16 +346,15 @@ class RegimePerformanceAnalyzer:
         if len(returns) < 2:
             return 0.0
         
-        # Annualize based on trading days (assuming ~252 trading days)
-        periods_per_year = 252
-        
         mean_return = returns.mean()
         std_return = returns.std()
         
         if std_return == 0:
             return 0.0
         
-        sharpe = (mean_return * periods_per_year) / (std_return * np.sqrt(periods_per_year))
+        # Simple Sharpe ratio without annualization since these are per-trade returns
+        # not time-based returns
+        sharpe = mean_return / std_return
         return sharpe
     
     def _calculate_sortino_ratio(self, returns: pd.Series) -> float:
@@ -339,20 +362,19 @@ class RegimePerformanceAnalyzer:
         if len(returns) < 2:
             return 0.0
         
-        periods_per_year = 252
-        
         mean_return = returns.mean()
         downside_returns = returns[returns < 0]
         
         if len(downside_returns) == 0:
-            return 0.0
+            return float('inf') if mean_return > 0 else 0.0
         
         downside_std = downside_returns.std()
         
         if downside_std == 0:
             return 0.0
         
-        sortino = (mean_return * periods_per_year) / (downside_std * np.sqrt(periods_per_year))
+        # Simple Sortino ratio without annualization for per-trade returns
+        sortino = mean_return / downside_std
         return sortino
     
     def _calculate_max_drawdown(self, values: List[float]) -> float:
@@ -515,6 +537,165 @@ class RegimePerformanceAnalyzer:
         
         return summary
     
+    def create_detailed_regime_performance_table(self,
+                                               analysis_results: Dict[str, Any],
+                                               trade_history: List[Dict]) -> pd.DataFrame:
+        """Create a detailed performance table by regime, strategy, and market"""
+        
+        regime_history = analysis_results.get("regime_history", [])
+        
+        if not regime_history or not trade_history:
+            return pd.DataFrame()
+        
+        # Create timestamp to regime mapping
+        regime_map = {rh['timestamp']: rh['regime'] for rh in regime_history}
+        
+        # Group trades by regime, strategy, and market
+        grouped_trades = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+        
+        for trade in trade_history:
+            timestamp = trade['timestamp']
+            regime = regime_map.get(timestamp, MarketRegime.UNKNOWN)
+            strategy = trade.get('strategy', 'unknown')
+            market = trade['market']
+            
+            grouped_trades[regime.value][strategy][market].append(trade)
+        
+        # Calculate metrics for each group
+        table_data = []
+        
+        for regime_name, strategy_data in grouped_trades.items():
+            for strategy_name, market_data in strategy_data.items():
+                for market_name, trades in market_data.items():
+                    # Calculate metrics for this specific group
+                    metrics = self._calculate_group_metrics(trades, regime_name)
+                    
+                    if metrics:
+                        table_data.append({
+                            "Regime": regime_name,
+                            "Strategy": strategy_name,
+                            "Market": market_name,
+                            "Trades": metrics['total_trades'],
+                            "Win Rate": f"{metrics['win_rate']*100:.1f}%",
+                            "Total Return": f"{metrics['total_return']:.2f}%",
+                            "Avg Return": f"{metrics['avg_return']:.2f}%",
+                            "Total P&L": f"₩{metrics['total_pnl']:,.0f}",
+                            "Sharpe": f"{metrics['sharpe']:.2f}",
+                            "Max DD": f"{metrics['max_dd']:.2f}%",
+                            "Avg Hold": metrics['avg_hold']
+                        })
+        
+        # Create DataFrame
+        df = pd.DataFrame(table_data)
+        
+        if not df.empty:
+            # Sort by regime, then strategy, then market
+            df = df.sort_values(['Regime', 'Strategy', 'Market'])
+        
+        return df
+    
+    def _calculate_group_metrics(self, trades: List[Dict], regime_name: str) -> Dict:
+        """Calculate metrics for a specific group of trades"""
+        
+        # Separate buy and sell trades
+        buy_trades = [t for t in trades if t['side'] == 'buy']
+        sell_trades = [t for t in trades if t['side'] == 'sell' or t.get('action', '').endswith('_sell')]
+        
+        # Match trades to calculate P&L
+        trade_pnls = []
+        holding_periods = []
+        positions = []
+        
+        for trade in sorted(trades, key=lambda x: x['timestamp']):
+            if trade['side'] == 'buy':
+                positions.append(trade)
+            elif (trade['side'] == 'sell' or trade.get('action', '').endswith('_sell')) and positions:
+                buy_trade = positions.pop(0)
+                
+                # Calculate P&L
+                buy_cost = buy_trade['quantity'] * buy_trade['price'] * (1 + buy_trade.get('fee_rate', 0))
+                sell_proceeds = trade['quantity'] * trade['price'] * (1 - trade.get('fee_rate', 0))
+                pnl = sell_proceeds - buy_cost
+                pnl_pct = pnl / buy_cost
+                
+                # Calculate holding period
+                buy_ts = buy_trade['timestamp']
+                sell_ts = trade['timestamp']
+                
+                if isinstance(buy_ts, (int, float)):
+                    buy_time = pd.to_datetime(buy_ts, unit='s')
+                else:
+                    buy_time = pd.to_datetime(buy_ts)
+                    
+                if isinstance(sell_ts, (int, float)):
+                    sell_time = pd.to_datetime(sell_ts, unit='s')
+                else:
+                    sell_time = pd.to_datetime(sell_ts)
+                
+                holding_period = sell_time - buy_time
+                
+                trade_pnls.append({
+                    'pnl': pnl,
+                    'pnl_pct': pnl_pct,
+                    'holding_period': holding_period
+                })
+                
+                holding_periods.append(holding_period)
+        
+        if not trade_pnls:
+            return None
+        
+        # Calculate metrics
+        winning_trades = sum(1 for tp in trade_pnls if tp['pnl'] > 0)
+        total_trades = len(trade_pnls)
+        win_rate = winning_trades / total_trades if total_trades > 0 else 0
+        
+        returns = [tp['pnl_pct'] for tp in trade_pnls]
+        pnls = [tp['pnl'] for tp in trade_pnls]
+        
+        # Compound returns
+        total_return = 1.0
+        for ret in returns:
+            total_return *= (1 + ret)
+        total_return = (total_return - 1) * 100
+        
+        avg_return = np.mean(returns) * 100 if returns else 0
+        total_pnl = sum(pnls)
+        
+        # Sharpe ratio
+        sharpe = 0
+        if len(returns) > 1:
+            returns_series = pd.Series(returns)
+            std_return = returns_series.std()
+            if std_return > 0:
+                sharpe = returns_series.mean() / std_return
+        
+        # Max drawdown (simplified)
+        cumulative = 1.0
+        peak = 1.0
+        max_dd = 0.0
+        
+        for ret in returns:
+            cumulative *= (1 + ret)
+            peak = max(peak, cumulative)
+            dd = (cumulative - peak) / peak
+            max_dd = min(max_dd, dd)
+        
+        # Average holding period
+        avg_hold = pd.Timedelta(np.mean(holding_periods)) if holding_periods else timedelta(0)
+        avg_hold_str = str(avg_hold).split('.')[0] if avg_hold != timedelta(0) else "N/A"
+        
+        return {
+            'total_trades': total_trades,
+            'win_rate': win_rate,
+            'total_return': total_return,
+            'avg_return': avg_return,
+            'total_pnl': total_pnl,
+            'sharpe': sharpe,
+            'max_dd': max_dd * 100,
+            'avg_hold': avg_hold_str
+        }
+    
     def create_regime_performance_table(self, 
                                       analysis_results: Dict[str, Any]) -> pd.DataFrame:
         """Create a formatted performance table by regime"""
@@ -533,14 +714,14 @@ class RegimePerformanceAnalyzer:
                     "Regime": regime_name,
                     "Time %": f"{metrics.regime_percentage:.1f}%",
                     "Trades": metrics.total_trades,
-                    "Win Rate": f"{metrics.win_rate:.1%}",
-                    "Total Return": f"{metrics.total_return:.2%}",
-                    "Avg Return": f"{metrics.average_return:.2%}",
+                    "Win Rate": f"{metrics.win_rate*100:.1f}%",
+                    "Total Return": f"{metrics.total_return:.2f}%",
+                    "Avg Return": f"{metrics.average_return:.2f}%",
                     "Total P&L": f"₩{metrics.total_pnl:,.0f}",
                     "Sharpe": f"{metrics.sharpe_ratio:.2f}",
-                    "Sortino": f"{metrics.sortino_ratio:.2f}",
-                    "Max DD": f"{metrics.max_drawdown:.2%}",
-                    "Avg Hold": str(metrics.avg_holding_period).split('.')[0]  # Remove microseconds
+                    "Sortino": f"{metrics.sortino_ratio:.2f}" if not np.isnan(metrics.sortino_ratio) and not np.isinf(metrics.sortino_ratio) else "N/A",
+                    "Max DD": f"{metrics.max_drawdown*100:.2f}%",
+                    "Avg Hold": str(metrics.avg_holding_period).split('.')[0] if metrics.avg_holding_period != timedelta(0) else "N/A"
                 }
                 table_data.append(row)
         

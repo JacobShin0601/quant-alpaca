@@ -56,6 +56,7 @@ class GARCHPositionSizer:
         self.config = config or self._get_default_config()
         self.models = {}  # Cache fitted models per market
         self.volatility_history = {}  # Track realized vs predicted volatility
+        self.trade_history = {}  # Track actual trading P&L for Kelly calculation
         
     def _get_default_config(self) -> Dict:
         """Default GARCH and position sizing configuration"""
@@ -90,9 +91,11 @@ class GARCHPositionSizer:
                     "kelly_fraction": 0.25,  # Fractional Kelly (25%)
                     "win_rate_window": 50,  # Window for calculating win rate
                     "profit_loss_ratio_window": 50,  # Window for P/L ratio
-                    "min_trades": 20,  # Minimum trades for Kelly calculation
+                    "min_trades": 10,  # Minimum trades for Kelly calculation (reduced)
                     "max_kelly_position": 0.5,  # Maximum Kelly position
-                    "use_garch_vol": True  # Incorporate GARCH volatility
+                    "use_garch_vol": True,  # Incorporate GARCH volatility
+                    "use_price_returns": True,  # Use price returns if no trade history
+                    "default_kelly": 0.1  # Default Kelly when insufficient data
                 }
             },
             "risk_adjustments": {
@@ -207,13 +210,24 @@ class GARCHPositionSizer:
     
     def calculate_kelly_fraction(self, 
                                returns: pd.Series,
-                               predicted_vol: float) -> Tuple[float, Dict]:
+                               predicted_vol: float,
+                               market: Optional[str] = None) -> Tuple[float, Dict]:
         """Calculate Kelly fraction with GARCH volatility adjustment"""
         
         kelly_config = self.config["position_sizing"]["kelly_criterion"]
         
-        if not kelly_config["enabled"] or len(returns) < kelly_config["min_trades"]:
-            return 0.0, {"reason": "Insufficient data or Kelly disabled"}
+        if not kelly_config["enabled"]:
+            return 0.0, {"reason": "Kelly disabled"}
+        
+        # Check if we have enough data
+        if len(returns) < kelly_config["min_trades"]:
+            # Use default Kelly fraction when insufficient data
+            default_kelly = kelly_config.get("default_kelly", 0.1)
+            return default_kelly * kelly_config["kelly_fraction"], {
+                "reason": "Using default Kelly - insufficient data",
+                "data_points": len(returns),
+                "required": kelly_config["min_trades"]
+            }
         
         # Calculate win rate
         win_rate_window = min(len(returns), kelly_config["win_rate_window"])
@@ -226,7 +240,13 @@ class GARCHPositionSizer:
         losing_returns = recent_returns[recent_returns < 0]
         
         if len(winning_returns) == 0 or len(losing_returns) == 0:
-            return 0.0, {"reason": "No wins or losses in window"}
+            # Use conservative default when no wins or losses
+            default_kelly = kelly_config.get("default_kelly", 0.1)
+            return default_kelly * kelly_config["kelly_fraction"], {
+                "reason": "Using default Kelly - no wins or losses yet",
+                "wins": len(winning_returns),
+                "losses": len(losing_returns)
+            }
         
         avg_win = winning_returns.mean()
         avg_loss = abs(losing_returns.mean())
@@ -301,7 +321,7 @@ class GARCHPositionSizer:
         vol_adjusted_position = base_pos * (target_vol / predicted_vol) if predicted_vol > 0 else base_pos
         
         # 2. Kelly criterion position sizing
-        kelly_fraction, kelly_info = self.calculate_kelly_fraction(returns, predicted_vol)
+        kelly_fraction, kelly_info = self.calculate_kelly_fraction(returns, predicted_vol, market)
         kelly_position = base_pos * kelly_fraction
         
         # 3. Combine strategies (use maximum of the two as they're complementary)

@@ -3,17 +3,90 @@
         "n_trials": 100,
         "n_jobs": -1,
         "timeout": 3600,
-        "objective": "sharpe_ratio",
+        "objective": "risk_adjusted_return",
         "direction": "maximize",
         "sampler": "TPE",
         "pruner": "MedianPruner",
-        "train_ratio": 0.7
+        "train_ratio": 0.5
     },
     "backtesting": {
-        "initial_capital": 10000000,
+        "initial_capital": 3000000,
         "commission_rate": 0.0005,
         "slippage_rate": 0.001,
-        "min_data_points": 1000
+        "min_data_points": 1000,
+        "max_positions": 3,
+        "order_type": "limit",
+        "position_sizing": {
+            "max_position_pct": 0.2,
+            "use_dynamic_sizing": false,
+            "use_garch_sizing": false,
+            "garch_config": {
+                "lookback_period": 252,
+                "update_frequency": 24,
+                "vol_target": 0.15,
+                "leverage_limit": 1.0
+            }
+        },
+        "risk_management": {
+            "enabled": true,
+            "stop_loss": {
+                "enabled": true,
+                "initial_stop_pct": 0.02,
+                "order_type": "stop_limit",
+                "limit_offset_pct": 0.005,
+                "max_attempts_before_market": 3,
+                "trailing_stop": {
+                    "enabled": true,
+                    "activation_pct": 0.01,
+                    "trail_pct": 0.015,
+                    "order_type": "stop_limit"
+                }
+            },
+            "take_profit": {
+                "enabled": true,
+                "target_pct": 0.03,
+                "partial_exits": [
+                    {"pct": 0.015, "size": 0.5},
+                    {"pct": 0.025, "size": 0.3}
+                ]
+            },
+            "time_based_exits": {
+                "enabled": false,
+                "max_hold_periods": 1440
+            }
+        },
+        "var_risk_management": {
+            "enabled": false,
+            "confidence_level": 0.95,
+            "lookback_period": 30,
+            "max_var_pct": 0.05,
+            "check_frequency_minutes": 60
+        },
+        "regime_analysis": {
+            "enabled": true,
+            "analyze_performance": true,
+            "regime_config": {
+                "lookback_period": 20,
+                "volatility_threshold": 0.02,
+                "trend_threshold": 0.0001,
+                "volume_ma_period": 20,
+                "atr_period": 14,
+                "adx_period": 14,
+                "adx_threshold": 25,
+                "ma_periods": [20, 50],
+                "bb_period": 20,
+                "bb_std": 2.0,
+                "volume_period": 20,
+                "choppiness_period": 14
+            }
+        },
+        "execution": {
+            "log_level": "WARNING",
+            "max_log_trades": 100,
+            "save_detailed_results": false,
+            "warmup_period_minutes": 30,
+            "max_stop_limit_warnings": 1
+        }
     },
     "strategy_params": {
         "basic_momentum": {
@@ -24,12 +97,12 @@
             "ma_long": {"type": "int", "low": 25, "high": 35, "step": 2}
         },
         "vwap": {
-            "vwap_period": {"type": "int", "low": 10, "high": 50, "step": 5},
-            "vwap_threshold": {"type": "float", "low": 0.001, "high": 0.02, "step": 0.001},
-            "volume_threshold": {"type": "float", "low": 1.0, "high": 2.5, "step": 0.1},
-            "strategy_variant": {"type": "categorical", "choices": ["mean_reversion", "trend_following", "breakout", "combined"]},
-            "use_momentum": {"type": "categorical", "choices": [true, false]},
-            "momentum_period": {"type": "int", "low": 10, "high": 20, "step": 2}
+            "vwap_period": {"type": "int", "low": 10, "high": 30, "step": 5},
+            "vwap_threshold": {"type": "float", "low": 0.002, "high": 0.015, "step": 0.002},
+            "volume_threshold": {"type": "float", "low": 1.2, "high": 2.0, "step": 0.2},
+            "strategy_variant": {"type": "categorical", "choices": ["mean_reversion", "trend_following", "breakout"]},
+            "use_vwap_bands": {"type": "categorical", "choices": [true, false]},
+            "use_momentum": {"type": "categorical", "choices": [false]}
         },
         "advanced_vwap": {
             "vwap_period": {"type": "int", "low": 15, "high": 30, "step": 3},

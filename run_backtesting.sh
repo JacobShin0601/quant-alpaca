@@ -47,6 +47,10 @@ while [[ $# -gt 0 ]]; do
             OPTIMIZE_STRATEGY="$2"
             shift 2
             ;;
+        --ensemble)
+            ENSEMBLE_TYPE="$2"
+            shift 2
+            ;;
         --train-ratio)
             TRAIN_RATIO="$2"
             shift 2
@@ -61,6 +65,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --strategy STRATEGIES  Run specific strategies or 'all' for all strategies"
             echo "  --market MARKETS      Run specific markets or 'all' for all markets"
             echo "  --optimize-strategy   Optimize strategy hyperparameters ('all' or specific strategy)"
+            echo "  --ensemble TYPE       Run ensemble strategy: two-step, adaptive, or hierarchical"
             echo "  --train-ratio RATIO   Train/test split ratio for optimization (default: 0.7)"
             echo "  -h, --help            Show this help message"
             echo ""
@@ -69,6 +74,7 @@ while [[ $# -gt 0 ]]; do
             echo "  mean_reversion, macd, stochastic, pairs, ichimoku"
             echo "  supertrend, atr_breakout, keltner_channels, donchian_channels"
             echo "  volume_profile, fibonacci_retracement, aroon, ensemble"
+            echo "  ensemble_two_step, ensemble_adaptive, ensemble_hierarchical"
             echo ""
             echo "Available markets (examples):"
             echo "  KRW-BTC, KRW-ETH, KRW-XRP, KRW-ADA, KRW-SOL, KRW-DOT"
@@ -82,6 +88,8 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --config config/strategies/vwap.json    # Use specific config file"
             echo "  $0 --optimize-strategy all --train-ratio 0.7   # Optimize all strategies"
             echo "  $0 --optimize-strategy vwap --train-ratio 0.8  # Optimize VWAP strategy only"
+            echo "  $0 --ensemble two-step --market all        # Run two-step ensemble"
+            echo "  $0 --ensemble adaptive --use-cached-data   # Run adaptive ensemble"
             exit 0
             ;;
         *)
@@ -101,6 +109,13 @@ if [ ! -z "$OPTIMIZE_STRATEGY" ]; then
     echo "Mode: OPTIMIZATION"
     echo "Optimize Strategy: $OPTIMIZE_STRATEGY"
     echo "Train Ratio: $TRAIN_RATIO"
+fi
+
+# Check if ensemble mode
+if [ ! -z "$ENSEMBLE_TYPE" ]; then
+    echo "Mode: ENSEMBLE"
+    echo "Ensemble Type: $ENSEMBLE_TYPE"
+    echo "This will use pre-optimized strategies from results/optimization/"
 fi
 
 # Set default config file if not specified
@@ -178,6 +193,13 @@ CMD_ARGS="$CMD_ARGS --config $CONFIG_FILE"
 # Add optimization parameters if specified
 if [ ! -z "$OPTIMIZE_STRATEGY" ]; then
     CMD_ARGS="$CMD_ARGS --optimize-strategy $OPTIMIZE_STRATEGY --train-ratio $TRAIN_RATIO"
+fi
+
+# Add ensemble type if specified
+if [ ! -z "$ENSEMBLE_TYPE" ]; then
+    # Set strategy to the specific ensemble type
+    STRATEGIES=("ensemble_$ENSEMBLE_TYPE")
+    CMD_ARGS="$CMD_ARGS --strategy ensemble_$ENSEMBLE_TYPE"
 fi
 
 # Execute the backtesting

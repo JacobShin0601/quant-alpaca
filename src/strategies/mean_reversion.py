@@ -55,16 +55,18 @@ class MeanReversionStrategy(BaseStrategy):
         
         # Exit signals: return to mean
         current_position = 0
+        signal_col_idx = df.columns.get_loc('signal')
+        
         for i in range(1, len(df)):
             if current_position == 0:
                 current_position = df.iloc[i]['signal']
             elif current_position == 1:  # Long position
                 if df.iloc[i]['zscore'] > -exit_zscore:
-                    df.iloc[i, df.columns.get_loc('signal')] = 0
+                    df.iat[i, signal_col_idx] = 0
                     current_position = 0
             elif current_position == -1:  # Short position
                 if df.iloc[i]['zscore'] < exit_zscore:
-                    df.iloc[i, df.columns.get_loc('signal')] = 0
+                    df.iat[i, signal_col_idx] = 0
                     current_position = 0
         
         return df

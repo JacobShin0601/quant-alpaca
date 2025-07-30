@@ -27,6 +27,9 @@ class BacktestEngine:
         self.max_positions = config['backtesting']['max_positions']
         self.order_type = config['backtesting']['order_type']
         
+        # Store strategy name for trade history
+        self.strategy_name = config.get('strategy', {}).get('name', 'unknown')
+        
         # Portfolio state
         self.cash = self.initial_balance
         self.positions = {}  # {market: {'quantity': float, 'entry_price': float, 'entry_time': datetime}}
@@ -45,7 +48,31 @@ class BacktestEngine:
         
         # GARCH position sizing
         self.use_garch_sizing = position_sizing_config.get('use_garch_sizing', False)
-        self.garch_sizer = GARCHPositionSizer(position_sizing_config.get('garch_config', {}))
+        garch_config = position_sizing_config.get('garch_config', {})
+        
+        # Create GARCH position sizer - it will use default config if not provided
+        # The sizer expects a complete config structure, so we let it use its defaults
+        # and only override specific values from our config
+        if self.use_garch_sizing:
+            # Initialize with default config
+            self.garch_sizer = GARCHPositionSizer()
+            
+            # Override specific GARCH parameters if provided
+            if garch_config:
+                # Update GARCH model parameters
+                if 'lookback_period' in garch_config:
+                    self.garch_sizer.config['garch']['min_observations'] = garch_config['lookback_period']
+                if 'update_frequency' in garch_config:
+                    self.garch_sizer.config['garch']['refit_frequency'] = garch_config['update_frequency']
+                
+                # Update position sizing parameters
+                if 'vol_target' in garch_config:
+                    self.garch_sizer.config['position_sizing']['target_volatility'] = garch_config['vol_target']
+                if 'leverage_limit' in garch_config:
+                    self.garch_sizer.config['position_sizing']['max_leverage'] = garch_config['leverage_limit']
+        else:
+            # Create a dummy sizer that won't be used
+            self.garch_sizer = None
         
         # Risk management
         self.risk_manager = DynamicRiskManager(config.get('risk_management'))
@@ -71,6 +98,13 @@ class BacktestEngine:
         self.max_log_trades = 10  # Only log first 10 trades
         self.total_timestamps = 0
         self.processed_timestamps = 0
+        
+        # Stop-limit warning control
+        self.stop_limit_warning_count = {}  # Track warnings per market
+        self.max_stop_limit_warnings = config.get('execution', {}).get('max_stop_limit_warnings', 3)  # Only log first N warnings per market
+        
+        # Warmup period
+        self.warmup_period_minutes = config.get('execution', {}).get('warmup_period_minutes', 0)
         
         # Setup logging
         logging.basicConfig(level=getattr(logging, config['execution']['log_level']))
@@ -115,6 +149,33 @@ class BacktestEngine:
     def execute_trade(self, market: str, signal: int, price: float, timestamp: datetime, 
                      df: pd.DataFrame = None, regime: MarketRegime = None):
         """Execute a trade based on signal with dynamic risk management"""
+        # Check if we're still in warmup period
+        if self.warmup_period_minutes > 0:
+            # Calculate minutes since start
+            if isinstance(timestamp, (int, float)):
+                minutes_since_start = timestamp  # Already in minutes
+            else:
+                # Convert to minutes from start
+                if hasattr(self, 'backtest_start_date') and self.backtest_start_date is not None:
+                    # Ensure both are datetime objects
+                    if isinstance(timestamp, type(self.backtest_start_date)):
+                        time_diff = timestamp - self.backtest_start_date
+                        minutes_since_start = time_diff.total_seconds() / 60
+                    else:
+                        # Type mismatch - convert timestamp to same type as backtest_start_date
+                        try:
+                            timestamp_dt = pd.to_datetime(timestamp)
+                            time_diff = timestamp_dt - self.backtest_start_date
+                            minutes_since_start = time_diff.total_seconds() / 60
+                        except:
+                            minutes_since_start = float('inf')  # Can't determine, allow trading
+                else:
+                    minutes_since_start = float('inf')  # Can't determine, allow trading
+            
+            # Skip trading if still in warmup period
+            if minutes_since_start < self.warmup_period_minutes:
+                return
+        
         fee_rate, slippage_rate = self.get_trading_costs(market)
         
         # Check stop orders first for existing positions
@@ -123,8 +184,22 @@ class BacktestEngine:
         
         # Check if enough time has passed since last trade
         if market in self.last_trade_time:
-            time_since_last_trade = timestamp - self.last_trade_time[market]
-            if time_since_last_trade < self.min_trade_interval:
+            # Handle both datetime and int timestamps
+            if isinstance(timestamp, (int, float)):
+                current_ts = timestamp
+            else:
+                current_ts = timestamp.timestamp() if hasattr(timestamp, 'timestamp') else pd.Timestamp(timestamp).timestamp()
+            
+            last_ts = self.last_trade_time[market]
+            if isinstance(last_ts, (int, float)):
+                last_trade_ts = last_ts
+            else:
+                last_trade_ts = last_ts.timestamp() if hasattr(last_ts, 'timestamp') else pd.Timestamp(last_ts).timestamp()
+            
+            time_since_last_trade = current_ts - last_trade_ts
+            min_interval_seconds = self.min_trade_interval.total_seconds()
+            
+            if time_since_last_trade < min_interval_seconds:
                 return  # Skip trade if too soon
         
         # Check VaR limits if enabled
@@ -153,7 +228,7 @@ class BacktestEngine:
                 base_position_value = self.initial_balance * self.max_position_pct
                 
                 # Use GARCH position sizing if enabled
-                if self.use_garch_sizing and df is not None:
+                if self.use_garch_sizing and self.garch_sizer is not None and df is not None:
                     # Get returns for GARCH model
                     returns = df['trade_price'].pct_change().dropna()
                     
@@ -222,27 +297,36 @@ class BacktestEngine:
                     # Update last trade time
                     self.last_trade_time[market] = timestamp
                     
-                    # Calculate and set risk parameters
-                    if regime is None and df is not None:
-                        regime, _ = self.regime_detector.detect_regime(df)
-                    elif regime is None:
-                        regime = MarketRegime.UNKNOWN
+                    # Calculate and set risk parameters if risk management is enabled
+                    risk_management_enabled = self.config.get('risk_management', {}).get('enabled', True)
                     
-                    volatility_data = self._calculate_volatility_data(df, market) if df is not None else {}
-                    
-                    risk_params = self.risk_manager.calculate_position_risk_parameters(
-                        entry_price=execution_price,
-                        position_size=quantity,
-                        regime=regime,
-                        volatility_data=volatility_data
-                    )
-                    
-                    # Store risk parameters
-                    self.position_risk_params[market] = risk_params
-                    self.risk_manager.add_position(market, risk_params)
-                    
-                    # Set initial stop orders
-                    self._set_stop_orders(market, risk_params)
+                    if risk_management_enabled:
+                        if regime is None and df is not None:
+                            regime, _ = self.regime_detector.detect_regime(df)
+                        elif regime is None:
+                            regime = MarketRegime.UNKNOWN
+                        
+                        volatility_data = self._calculate_volatility_data(df, market) if df is not None else {}
+                        
+                        risk_params = self.risk_manager.calculate_position_risk_parameters(
+                            entry_price=execution_price,
+                            position_size=quantity,
+                            regime=regime,
+                            volatility_data=volatility_data
+                        )
+                        
+                        # Store risk parameters
+                        self.position_risk_params[market] = risk_params
+                        self.risk_manager.add_position(market, risk_params)
+                        
+                        # Set initial stop orders
+                        self._set_stop_orders(market, risk_params)
+                    else:
+                        # Set empty stop orders when risk management is disabled
+                        self.stop_orders[market] = {
+                            'stop_loss': 0,
+                            'take_profit': []
+                        }
                     
                     self.trade_history.append({
                         'timestamp': timestamp,
@@ -256,16 +340,14 @@ class BacktestEngine:
                         'slippage': slippage_rate,
                         'order_type': self.order_type,
                         'signal_strength': signal_strength if self.use_dynamic_sizing else 1.0,
-                        'position_pct': (position_value / self.initial_balance) * 100
+                        'position_pct': (position_value / self.initial_balance) * 100,
+                        'strategy': self.strategy_name
                     })
                     
                     # Convert timestamp to string format
-                    if hasattr(timestamp, 'strftime'):
-                        ts_str = timestamp.strftime('%Y-%m-%d %H:%M')
-                    else:
-                        ts_str = pd.to_datetime(timestamp).strftime('%Y-%m-%d %H:%M')
+                    ts_str = self._format_timestamp(timestamp)
                     self.trade_count += 1
-                    if self.trade_count <= self.max_log_trades:
+                    if self.max_log_trades > 0 and self.trade_count <= self.max_log_trades:
                         self.logger.info(f"[{ts_str}] BUY {market}: {quantity:.6f} at {execution_price:.2f} (fee: {fee_rate*100:.3f}%)")
                     
                     # Update last trade time
@@ -312,20 +394,34 @@ class BacktestEngine:
                     'cash_after': self.cash,
                     'fee_rate': fee_rate,
                     'slippage': slippage_rate,
-                    'order_type': self.order_type
+                    'order_type': self.order_type,
+                    'strategy': self.strategy_name
                 })
                 
                 # Convert timestamp to string format
-                if hasattr(timestamp, 'strftime'):
-                    ts_str = timestamp.strftime('%Y-%m-%d %H:%M')
-                else:
-                    ts_str = pd.to_datetime(timestamp).strftime('%Y-%m-%d %H:%M')
+                ts_str = self._format_timestamp(timestamp)
                 self.trade_count += 1
-                if self.trade_count <= self.max_log_trades:
+                if self.max_log_trades > 0 and self.trade_count <= self.max_log_trades:
                     self.logger.info(f"[{ts_str}] SELL {market}: {quantity:.6f} at {execution_price:.2f} (fee: {fee_rate*100:.3f}%)")
                 
                 # Update last trade time
                 self.last_trade_time[market] = timestamp
+    
+    def _format_timestamp(self, timestamp) -> str:
+        """Convert timestamp to readable format, handling index-based timestamps"""
+        if isinstance(timestamp, (int, float)):
+            # This is an index-based timestamp (minutes since start)
+            if hasattr(self, 'backtest_start_date') and self.backtest_start_date is not None:
+                # Calculate actual datetime from start date + minutes
+                actual_datetime = self.backtest_start_date + pd.Timedelta(minutes=int(timestamp))
+                return actual_datetime.strftime('%Y-%m-%d %H:%M')
+            else:
+                # Fallback to Unix timestamp handling
+                return pd.to_datetime(timestamp, unit='s').strftime('%Y-%m-%d %H:%M')
+        elif hasattr(timestamp, 'strftime'):
+            return timestamp.strftime('%Y-%m-%d %H:%M')
+        else:
+            return pd.to_datetime(timestamp).strftime('%Y-%m-%d %H:%M')
     
     def calculate_portfolio_value(self, current_prices: Dict[str, float]) -> float:
         """Calculate current portfolio value"""
@@ -344,7 +440,40 @@ class BacktestEngine:
     
     def run_backtest(self, data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
         """Run the backtest on provided data"""
-        self.logger.info("Starting backtest...")
+        if self.max_log_trades > 0:
+            self.logger.info("Starting backtest...")
+        
+        # Store the start date for timestamp display
+        self.backtest_start_date = None
+        for df in data.values():
+            if len(df) > 0:
+                first_timestamp = df.index[0]
+                if self.backtest_start_date is None:
+                    self.backtest_start_date = first_timestamp
+                else:
+                    # Handle comparison between different timestamp types
+                    if isinstance(first_timestamp, type(self.backtest_start_date)):
+                        if first_timestamp < self.backtest_start_date:
+                            self.backtest_start_date = first_timestamp
+                    elif isinstance(first_timestamp, (int, float)) and not isinstance(self.backtest_start_date, (int, float)):
+                        # Convert datetime to comparable format if needed
+                        continue
+                    elif not isinstance(first_timestamp, (int, float)) and isinstance(self.backtest_start_date, (int, float)):
+                        # Prefer datetime over int
+                        self.backtest_start_date = first_timestamp
+        
+        # Log warmup period if configured
+        if self.warmup_period_minutes > 0:
+            if isinstance(self.backtest_start_date, (int, float)):
+                # If start date is stored as minutes index, calculate warmup end in minutes
+                warmup_end_minutes = self.warmup_period_minutes
+                warmup_end_str = f"minute {warmup_end_minutes}"
+            else:
+                # If start date is a datetime, calculate actual end time
+                warmup_end = self.backtest_start_date + pd.Timedelta(minutes=self.warmup_period_minutes)
+                warmup_end_str = warmup_end.strftime('%Y-%m-%d %H:%M')
+            if self.max_log_trades > 0:
+                self.logger.info(f"Warmup period: {self.warmup_period_minutes} minutes (no trading until {warmup_end_str})")
         
         # Prepare data with indicators
         prepared_data = {}
@@ -385,7 +514,8 @@ class BacktestEngine:
             # Show progress every 10%
             progress = int((i / self.total_timestamps) * 100)
             if progress % 10 == 0 and progress != last_progress:
-                if self.trade_count > self.max_log_trades:
+                # Only log progress if not in optimization mode (when max_log_trades > 0)
+                if self.max_log_trades > 0:
                     # Count active positions
                     active_positions = 0
                     for position in self.positions.values():
@@ -443,8 +573,23 @@ class BacktestEngine:
             
             # Check VaR limits periodically
             if self.use_var_limits:
-                should_check_var = (self.last_var_check is None or 
-                                   timestamp - self.last_var_check >= self.var_check_frequency)
+                if self.last_var_check is None:
+                    should_check_var = True
+                else:
+                    # Handle both datetime and int timestamps
+                    if isinstance(timestamp, (int, float)):
+                        current_ts = timestamp
+                    else:
+                        current_ts = timestamp.timestamp() if hasattr(timestamp, 'timestamp') else pd.Timestamp(timestamp).timestamp()
+                    
+                    if isinstance(self.last_var_check, (int, float)):
+                        last_check_ts = self.last_var_check
+                    else:
+                        last_check_ts = self.last_var_check.timestamp() if hasattr(self.last_var_check, 'timestamp') else pd.Timestamp(self.last_var_check).timestamp()
+                    
+                    time_since_check = current_ts - last_check_ts
+                    check_frequency_seconds = self.var_check_frequency.total_seconds()
+                    should_check_var = time_since_check >= check_frequency_seconds
                 
                 if should_check_var and len(self.portfolio_value_history) > 20:
                     # Calculate portfolio returns
@@ -482,8 +627,11 @@ class BacktestEngine:
                             self.var_limit_breached = False
                         
                         # Update VaR history
+                        last_return = 0
+                        if len(portfolio_returns) > 0 and not portfolio_returns.empty:
+                            last_return = portfolio_returns.iloc[-1] if not pd.isna(portfolio_returns.iloc[-1]) else 0
                         self.var_manager.update_history(
-                            portfolio_returns.iloc[-1] if len(portfolio_returns) > 0 else 0,
+                            last_return,
                             self.current_var_result,
                             timestamp
                         )
@@ -515,10 +663,11 @@ class BacktestEngine:
         results = self.calculate_results()
         
         # Final summary
-        if self.trade_count > self.max_log_trades:
-            self.logger.info(f"... ({self.trade_count - self.max_log_trades} more trades not shown)")
-        
-        self.logger.info(f"Backtest completed! Total trades: {self.trade_count}")
+        if self.max_log_trades > 0:
+            if self.trade_count > self.max_log_trades:
+                self.logger.info(f"... ({self.trade_count - self.max_log_trades} more trades not shown)")
+            
+            self.logger.info(f"Backtest completed! Total trades: {self.trade_count}")
         
         return results
     
@@ -536,23 +685,70 @@ class BacktestEngine:
         minute_returns = pd.Series(portfolio_values).pct_change().dropna()
         
         # Risk metrics - properly annualize minute-level data
-        # Assume 365 days * 24 hours * 60 minutes = 525,600 minutes per year
-        minutes_per_year = 365 * 24 * 60
+        # Calculate actual trading days and minutes
+        total_minutes = len(minute_returns)
+        if total_minutes > 0:
+            # Estimate trading days (assuming data doesn't include all 24/7)
+            # Crypto markets trade 24/7, but we'll use a more conservative approach
+            # Assume average 1440 minutes per day (24 hours)
+            trading_days = total_minutes / 1440
+            
+            # For annualization, use 252 trading days per year for traditional markets
+            # For crypto, use 365 days
+            days_per_year = 365
+            annualization_factor = days_per_year / max(trading_days, 1)
+        else:
+            annualization_factor = 1
+        
+        # Calculate annualized metrics more conservatively
+        # Use simple annualized return based on total return and time period
+        if trading_days > 0:
+            annualized_return = (1 + total_return) ** (annualization_factor) - 1
+        else:
+            annualized_return = 0
         
         # Annualized volatility
-        volatility = minute_returns.std() * np.sqrt(minutes_per_year)
+        if len(minute_returns) > 1:
+            # Convert minute volatility to daily, then annualize
+            minutes_per_day = 1440
+            daily_returns = minute_returns.groupby(minute_returns.index // minutes_per_day).sum()
+            if len(daily_returns) > 1:
+                daily_volatility = daily_returns.std()
+                annualized_volatility = daily_volatility * np.sqrt(days_per_year)
+            else:
+                annualized_volatility = minute_returns.std() * np.sqrt(252 * 6.5 * 60)  # Fallback
+        else:
+            annualized_volatility = 0
         
-        # Annualized return
-        mean_minute_return = minute_returns.mean()
-        annualized_return_from_minutes = (1 + mean_minute_return) ** minutes_per_year - 1
-        
-        # Sharpe ratio
-        sharpe_ratio = annualized_return_from_minutes / volatility if volatility > 0 else 0
+        # Sharpe ratio (using risk-free rate of 0 for simplicity)
+        risk_free_rate = 0
+        if annualized_volatility > 0:
+            sharpe_ratio = (annualized_return - risk_free_rate) / annualized_volatility
+        else:
+            sharpe_ratio = 0 if annualized_return <= 0 else np.sign(annualized_return) * 999
         
         # Sortino Ratio (downside deviation)
         downside_returns = minute_returns[minute_returns < 0]
-        downside_deviation = downside_returns.std() * np.sqrt(minutes_per_year) if len(downside_returns) > 0 else 0
-        sortino_ratio = annualized_return_from_minutes / downside_deviation if downside_deviation > 0 else 0
+        if len(downside_returns) > 1:
+            # Calculate downside deviation
+            downside_daily_returns = downside_returns.groupby(downside_returns.index // 1440).sum()
+            if len(downside_daily_returns) > 1:
+                downside_deviation = downside_daily_returns.std() * np.sqrt(days_per_year)
+            else:
+                downside_deviation = downside_returns.std() * np.sqrt(252 * 6.5 * 60)
+        else:
+            downside_deviation = 0
+            
+        if downside_deviation > 0:
+            sortino_ratio = (annualized_return - risk_free_rate) / downside_deviation
+        else:
+            sortino_ratio = 0 if annualized_return <= 0 else np.sign(annualized_return) * 999
+        
+        # Cap extreme values to prevent display issues
+        sharpe_ratio = np.clip(sharpe_ratio, -999, 999)
+        sortino_ratio = np.clip(sortino_ratio, -999, 999)
+        
+        volatility = annualized_volatility
         
         # Drawdown
         portfolio_series = pd.Series(portfolio_values)
@@ -562,7 +758,13 @@ class BacktestEngine:
         
         # Calmar Ratio (annualized return / max drawdown)
         # Use the already calculated annualized return
-        calmar_ratio = abs(annualized_return_from_minutes / max_drawdown) if max_drawdown < 0 else 0
+        if max_drawdown < 0 and abs(max_drawdown) > 0.01:  # Avoid division by very small numbers
+            calmar_ratio = annualized_return / abs(max_drawdown)
+        else:
+            calmar_ratio = 0
+        
+        # Cap extreme values
+        calmar_ratio = np.clip(calmar_ratio, -999, 999)
         
         # Calculate VaR metrics if enabled
         var_metrics = {}
@@ -598,19 +800,30 @@ class BacktestEngine:
                     self.prepared_data
                 )
                 
-                # Create performance table
+                # Create performance tables
                 regime_table = self.regime_analyzer.create_regime_performance_table(analysis_results)
+                detailed_table = self.regime_analyzer.create_detailed_regime_performance_table(
+                    analysis_results, self.trade_history
+                )
                 
                 regime_analysis = {
                     'regime_analysis': {
                         'summary': analysis_results['summary'],
                         'performance_table': regime_table.to_dict('records') if not regime_table.empty else [],
+                        'detailed_performance_table': detailed_table.to_dict('records') if not detailed_table.empty else [],
                         'regime_metrics': {k: self._serialize_regime_metrics(v) for k, v in analysis_results['regime_metrics'].items()}
                     }
                 }
                 
-                # Print regime performance table
-                if not regime_table.empty:
+                # Print detailed performance table if available
+                if not detailed_table.empty:
+                    print("\n" + "="*120)
+                    print("DETAILED PERFORMANCE BY MARKET REGIME, STRATEGY & MARKET")
+                    print("="*120)
+                    print(detailed_table.to_string(index=False))
+                    print("="*120 + "\n")
+                elif not regime_table.empty:
+                    # Fall back to simple regime table if detailed not available
                     print("\n" + "="*80)
                     print("PERFORMANCE BY MARKET REGIME")
                     print("="*80)
@@ -715,8 +928,16 @@ class BacktestEngine:
         
         # Update trailing stop if applicable
         if risk_params:
+            # Handle both datetime and int timestamps
+            current_ts = timestamp if isinstance(timestamp, (int, float)) else timestamp.timestamp()
+            entry_ts = position.get('entry_time', current_ts)
+            if isinstance(entry_ts, pd.Timestamp):
+                entry_ts = entry_ts.timestamp()
+            elif hasattr(entry_ts, 'timestamp'):
+                entry_ts = entry_ts.timestamp()
+            
             market_data = {
-                'position_age_minutes': (timestamp - position.get('entry_time', timestamp)).total_seconds() / 60
+                'position_age_minutes': (current_ts - entry_ts) / 60
             }
             updates = self.risk_manager.update_position_stops(market, current_price, market_data)
             
@@ -727,12 +948,46 @@ class BacktestEngine:
         
         # Check stop loss (including trailing stop)
         effective_stop = orders.get('trailing_stop', 0)
-        if orders.get('stop_loss', 0) > effective_stop:
-            effective_stop = orders['stop_loss']
+        stop_loss_price = orders.get('stop_loss', 0)
+        if stop_loss_price > effective_stop:
+            effective_stop = stop_loss_price
         
         if effective_stop > 0 and current_price <= effective_stop:
-            # Execute stop loss
-            self._execute_stop_order(market, quantity, current_price, timestamp, 'stop_loss')
+            # Check stop order type
+            stop_type = orders.get('stop_loss_type', 'stop_market')
+            
+            if stop_type == 'stop_limit':
+                # For stop-limit orders, check if limit price would be filled
+                limit_price = orders.get('stop_loss_limit_price', effective_stop * 0.995)
+                
+                # Simulate order book depth - assume limit order fills if price goes below limit
+                # In reality, this depends on liquidity and order book depth
+                if current_price <= limit_price:
+                    # Limit order fills
+                    self._execute_stop_order(market, quantity, limit_price, timestamp, 'stop_loss_limit')
+                else:
+                    # Limit order doesn't fill, increment attempts
+                    orders['stop_loss_attempts'] = orders.get('stop_loss_attempts', 0) + 1
+                    
+                    # After 3 failed attempts (3 minutes), convert to market order
+                    if orders['stop_loss_attempts'] >= 3:
+                        # Only log warning for first few occurrences per market
+                        if market not in self.stop_limit_warning_count:
+                            self.stop_limit_warning_count[market] = 0
+                        
+                        if self.stop_limit_warning_count[market] < self.max_stop_limit_warnings:
+                            self.logger.warning(f"Stop-limit order failed {orders['stop_loss_attempts']} times for {market}, converting to market order")
+                            self.stop_limit_warning_count[market] += 1
+                            
+                            # Add summary warning on last allowed warning
+                            if self.stop_limit_warning_count[market] == self.max_stop_limit_warnings:
+                                self.logger.info(f"Further stop-limit warnings for {market} will be suppressed")
+                        
+                        orders['stop_loss_type'] = 'stop_market'
+                        self._execute_stop_order(market, quantity, current_price, timestamp, 'stop_loss_market')
+            else:
+                # Execute market order immediately
+                self._execute_stop_order(market, quantity, current_price, timestamp, 'stop_loss')
             return
         
         # Check take profit levels
@@ -755,10 +1010,34 @@ class BacktestEngine:
     
     def _set_stop_orders(self, market: str, risk_params: RiskParameters):
         """Set initial stop orders for a position"""
+        # Initialize with safe defaults
         orders = {
-            'stop_loss': risk_params.stop_loss_price,
+            'stop_loss': 0,  # Default to 0 (no stop loss)
+            'stop_loss_type': 'stop_market',  # Default order type
+            'stop_loss_limit_price': 0,  # For stop-limit orders
+            'stop_loss_attempts': 0,  # Track failed attempts
             'take_profit': []
         }
+        
+        # Set stop loss if available
+        if hasattr(risk_params, 'stop_loss_price') and risk_params.stop_loss_price:
+            orders['stop_loss'] = risk_params.stop_loss_price
+            
+            # Set order type
+            if hasattr(risk_params, 'stop_loss_order_type'):
+                if risk_params.stop_loss_order_type == OrderType.STOP_LIMIT:
+                    orders['stop_loss_type'] = 'stop_limit'
+                    # Set limit price with offset (default 0.5%)
+                    orders['stop_loss_limit_price'] = risk_params.stop_loss_price * 0.995
+                else:
+                    orders['stop_loss_type'] = 'stop_market'
+        
+        # Skip partial exit configuration if risk management is disabled or regime_parameters missing
+        if (not hasattr(self.risk_manager, 'config') or 
+            'regime_parameters' not in self.risk_manager.config or
+            not hasattr(risk_params, 'regime')):
+            self.stop_orders[market] = orders
+            return
         
         # Get partial exit configuration
         regime_config = self.risk_manager.config["regime_parameters"][risk_params.regime.value]
@@ -779,9 +1058,16 @@ class BacktestEngine:
         """Execute a stop order"""
         fee_rate, slippage_rate = self.get_trading_costs(market)
         
-        # Adjust slippage for stop orders (usually worse execution)
-        if order_type == 'stop_loss':
-            slippage_rate *= 1.5  # 50% worse slippage for stops
+        # Adjust slippage based on order type
+        if 'stop_loss' in order_type:
+            if 'market' in order_type:
+                # Market orders have worse slippage
+                slippage_rate *= 2.0  # 100% worse slippage for market stops
+            elif 'limit' in order_type:
+                # Limit orders have better execution (if they fill)
+                slippage_rate *= 0.5  # 50% better slippage for limit stops
+            else:
+                slippage_rate *= 1.5  # 50% worse slippage for regular stops
         
         execution_price = price * (1 - slippage_rate)
         proceeds = quantity * execution_price * (1 - fee_rate)
@@ -814,16 +1100,19 @@ class BacktestEngine:
             'cash_after': self.cash,
             'fee_rate': fee_rate,
             'slippage': slippage_rate,
-            'order_type': order_type
+            'order_type': order_type,
+            'strategy': self.strategy_name
         })
         
         if self.trade_count <= self.max_log_trades:
-            self.logger.info(f"[{timestamp}] {order_type.upper()} {market}: {quantity:.6f} at {execution_price:.2f}")
+            # Convert timestamp to string format
+            ts_str = self._format_timestamp(timestamp)
+            self.logger.info(f"[{ts_str}] {order_type.upper()} {market}: {quantity:.6f} at {execution_price:.2f}")
     
     def _calculate_volatility_data(self, df: pd.DataFrame, market: str) -> Dict:
         """Calculate volatility data for risk management"""
-        if df is None or len(df) < 20:
-            return {}
+        if df is None or len(df) < 50:  # Need at least 50 rows for proper calculations
+            return {'atr': 0, 'volatility_ratio': 1.0, 'momentum': None, 'rsi': None}
         
         # Calculate ATR
         high_low = df['high_price'] - df['low_price']
@@ -831,22 +1120,24 @@ class BacktestEngine:
         low_close = abs(df['low_price'] - df['trade_price'].shift(1))
         
         tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-        atr = tr.rolling(window=14).mean().iloc[-1]
+        atr_series = tr.rolling(window=14).mean()
+        atr = atr_series.iloc[-1] if len(atr_series) > 0 and not pd.isna(atr_series.iloc[-1]) else 0
         
         # Calculate volatility ratio
         returns = df['trade_price'].pct_change()
-        current_vol = returns.rolling(window=20).std().iloc[-1]
+        current_vol_series = returns.rolling(window=20).std()
+        current_vol = current_vol_series.iloc[-1] if len(current_vol_series) > 0 and not pd.isna(current_vol_series.iloc[-1]) else 0
         avg_vol = returns.rolling(window=50).std().mean()
-        volatility_ratio = current_vol / avg_vol if avg_vol > 0 else 1.0
+        volatility_ratio = current_vol / avg_vol if avg_vol > 0 and current_vol > 0 else 1.0
         
         # Get other indicators if available
         momentum = None
         rsi = None
         
-        if 'momentum' in df.columns:
-            momentum = df['momentum'].iloc[-1]
-        if 'rsi' in df.columns:
-            rsi = df['rsi'].iloc[-1]
+        if 'momentum' in df.columns and len(df) > 0:
+            momentum = df['momentum'].iloc[-1] if not pd.isna(df['momentum'].iloc[-1]) else None
+        if 'rsi' in df.columns and len(df) > 0:
+            rsi = df['rsi'].iloc[-1] if not pd.isna(df['rsi'].iloc[-1]) else None
         
         return {
             'atr': atr,

@@ -1,0 +1,79 @@
+{
+    "stage1": {
+        "strategies_to_optimize": [
+            "vwap", 
+            "bollinger_bands", 
+            "macd", 
+            "supertrend", 
+            "mean_reversion", 
+            "atr_breakout", 
+            "ichimoku",
+            "keltner_channels",
+            "volume_profile",
+            "fibonacci_retracement",
+            "aroon"
+        ],
+        "optimization_config": "config/config_optimize.json",
+        "parallel_workers": 4,
+        "skip_if_exists": true
+    },
+    "stage2": {
+        "ensemble_structure": {
+            "trending_up": {
+                "primary_pool": ["supertrend", "ichimoku", "vwap", "aroon"],
+                "secondary_pool": ["macd", "atr_breakout", "fibonacci_retracement"],
+                "max_strategies": 4,
+                "weight_range": [0.6, 0.8]
+            },
+            "trending_down": {
+                "primary_pool": ["mean_reversion", "bollinger_bands", "keltner_channels"],
+                "secondary_pool": ["supertrend", "vwap", "fibonacci_retracement"],
+                "max_strategies": 3,
+                "weight_range": [0.5, 0.7]
+            },
+            "sideways": {
+                "primary_pool": ["mean_reversion", "bollinger_bands", "keltner_channels", "volume_profile"],
+                "secondary_pool": ["vwap", "macd", "stochastic"],
+                "max_strategies": 4,
+                "weight_range": [0.5, 0.7]
+            },
+            "volatile": {
+                "primary_pool": ["atr_breakout", "bollinger_bands", "volume_profile"],
+                "secondary_pool": ["mean_reversion", "keltner_channels"],
+                "max_strategies": 3,
+                "weight_range": [0.4, 0.6]
+            }
+        },
+        "meta_parameters": {
+            "weight_optimization": true,
+            "adaptive_weights": true,
+            "performance_window": 100,
+            "rebalance_frequency": 50,
+            "min_strategy_weight": 0.05,
+            "max_strategy_weight": 0.4,
+            "weight_decay": 0.95,
+            "performance_threshold": 0.0
+        },
+        "optimization_trials": 50,
+        "optimization_timeout": 7200
+    },
+    "performance_metrics": {
+        "optimization_objective": "risk_adjusted_return",
+        "risk_penalty": 0.5,
+        "consistency_bonus": 0.2,
+        "regime_adaptability_bonus": 0.3,
+        "drawdown_penalty": 0.4,
+        "win_rate_bonus": 0.1
+    },
+    "data_split": {
+        "train_ratio": 0.6,
+        "validation_ratio": 0.2,
+        "test_ratio": 0.2
+    },
+    "markets": ["KRW-BTC", "KRW-ETH", "KRW-XRP"],
+    "backtest_config": {
+        "initial_capital": 10000000,
+        "commission_rate": 0.0005,
+        "slippage_rate": 0.001
+    }
+}

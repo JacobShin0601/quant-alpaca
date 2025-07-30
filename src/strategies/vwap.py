@@ -7,6 +7,12 @@ from .base import BaseStrategy
 class VWAPStrategy(BaseStrategy):
     """VWAP (Volume Weighted Average Price) strategy with multiple timeframes"""
     
+    def __init__(self, parameters: Dict[str, Any]):
+        super().__init__(parameters)
+        # For real-time optimization
+        self._last_vwap_values = {}
+        self._last_volume_sums = {}
+    
     def _should_buy(self, last_row, df) -> bool:
         """Buy when price is below VWAP with high volume"""
         if pd.isna(last_row.get('vwap_deviation', np.nan)) or pd.isna(last_row.get('volume_ratio', np.nan)):
@@ -39,21 +45,24 @@ class VWAPStrategy(BaseStrategy):
         vwap_period = self.parameters['vwap_period']
         vwap_short_period = self.parameters.get('vwap_short_period', vwap_period // 2)
         
-        # VWAP calculation
+        # VWAP calculation - optimize by reusing calculations
         df['typical_price'] = (df['high_price'] + df['low_price'] + df['trade_price']) / 3
         df['price_volume'] = df['typical_price'] * df['candle_acc_trade_volume']
         
-        # Rolling VWAP
-        df['vwap'] = (
-            df['price_volume'].rolling(window=vwap_period).sum() /
-            df['candle_acc_trade_volume'].rolling(window=vwap_period).sum()
-        )
+        # Use cumsum for better performance on large datasets
+        price_volume_sum = df['price_volume'].rolling(window=vwap_period, min_periods=1).sum()
+        volume_sum = df['candle_acc_trade_volume'].rolling(window=vwap_period, min_periods=1).sum()
         
-        # Short-term VWAP for comparison
-        df['vwap_short'] = (
-            df['price_volume'].rolling(window=vwap_short_period).sum() /
-            df['candle_acc_trade_volume'].rolling(window=vwap_short_period).sum()
-        )
+        # Avoid division by zero
+        df['vwap'] = price_volume_sum / volume_sum.where(volume_sum > 0, 1)
+        
+        # Only calculate short-term VWAP if different from main period
+        if vwap_short_period != vwap_period:
+            price_volume_sum_short = df['price_volume'].rolling(window=vwap_short_period, min_periods=1).sum()
+            volume_sum_short = df['candle_acc_trade_volume'].rolling(window=vwap_short_period, min_periods=1).sum()
+            df['vwap_short'] = price_volume_sum_short / volume_sum_short.where(volume_sum_short > 0, 1)
+        else:
+            df['vwap_short'] = df['vwap']
         
         # VWAP bands (standard deviation bands)
         if self.parameters.get('use_vwap_bands', True):
@@ -64,37 +73,42 @@ class VWAPStrategy(BaseStrategy):
             df['vwap_upper'] = df['vwap'] + (df['vwap_std'] * vwap_std_multiplier)
             df['vwap_lower'] = df['vwap'] - (df['vwap_std'] * vwap_std_multiplier)
         
-        # Price relative to VWAP
-        df['price_vwap_ratio'] = df['trade_price'] / df['vwap']
+        # Price relative to VWAP - only calculate what's needed
+        # df['price_vwap_ratio'] = df['trade_price'] / df['vwap']  # Not used in signals
         df['vwap_deviation'] = (df['trade_price'] - df['vwap']) / df['vwap']
         
-        # Volume indicators
+        # Volume indicators - optimize rolling calculation
         volume_period = self.parameters.get('volume_period', 20)
-        df['volume_ma'] = df['candle_acc_trade_volume'].rolling(window=volume_period).mean()
-        df['volume_ratio'] = df['candle_acc_trade_volume'] / df['volume_ma']
+        df['volume_ma'] = df['candle_acc_trade_volume'].rolling(window=volume_period, min_periods=1).mean()
+        # Avoid division by zero
+        df['volume_ratio'] = df['candle_acc_trade_volume'] / df['volume_ma'].where(df['volume_ma'] > 0, 1)
         
-        # Additional momentum indicators if enabled
-        if self.parameters.get('use_momentum', True):
+        # Additional momentum indicators only if needed by strategy variant
+        strategy_variant = self.parameters.get('strategy_variant', 'mean_reversion')
+        if self.parameters.get('use_momentum', True) and strategy_variant == 'combined':
             momentum_period = self.parameters.get('momentum_period', 14)
-            df['momentum'] = df['trade_price'] / df['trade_price'].shift(momentum_period) - 1
+            df['momentum'] = df['trade_price'].pct_change(momentum_period)
         
         return df
     
     def generate_signals(self, df: pd.DataFrame, market: str) -> pd.DataFrame:
         """Generate buy/sell signals based on VWAP strategy"""
-        df['signal'] = 0  # 0: hold, 1: buy, -1: sell
+        # Initialize signal column with zeros using numpy for speed
+        import numpy as np
+        df['signal'] = np.zeros(len(df), dtype=np.int8)
         
         # Strategy parameters
         vwap_threshold = self.parameters.get('vwap_threshold', 0.005)  # 0.5% threshold
         volume_threshold = self.parameters.get('volume_threshold', 1.2)  # 20% above average
         momentum_threshold = self.parameters.get('momentum_threshold', 0.02)  # 2% momentum
         
-        # Basic VWAP conditions
-        price_below_vwap = df['vwap_deviation'] < -vwap_threshold
-        price_above_vwap = df['vwap_deviation'] > vwap_threshold
+        # Basic VWAP conditions - calculate once
+        vwap_dev = df['vwap_deviation'].values
+        vol_ratio = df['volume_ratio'].values
         
-        # Volume confirmation
-        high_volume = df['volume_ratio'] > volume_threshold
+        price_below_vwap = vwap_dev < -vwap_threshold
+        price_above_vwap = vwap_dev > vwap_threshold
+        high_volume = vol_ratio > volume_threshold
         
         # Additional conditions based on strategy variant
         strategy_variant = self.parameters.get('strategy_variant', 'mean_reversion')
@@ -180,9 +194,9 @@ class VWAPStrategy(BaseStrategy):
             buy_condition = buy_condition & price_filter
             sell_condition = sell_condition & price_filter
         
-        # Apply signals
-        df.loc[buy_condition, 'signal'] = 1
-        df.loc[sell_condition, 'signal'] = -1
+        # Apply signals using numpy where for better performance
+        signals = np.where(buy_condition, 1, np.where(sell_condition, -1, 0))
+        df['signal'] = signals
         
         return df
 
