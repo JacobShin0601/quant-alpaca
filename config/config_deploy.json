@@ -1,0 +1,277 @@
+{
+    "execution": {
+        "real_trading": false,
+        "update_interval_seconds": 60,
+        "risk_check_interval_minutes": 15,
+        "max_slippage_pct": 0.5,
+        "max_trades_per_day": 10,
+        "max_position_size_pct": 20.0,
+        "max_total_risk_pct": 50.0,
+        "simulation_initial_balance": 10000000,
+        "fee_rate": 0.05
+    },
+    "data": {
+        "database_directory": "data/candles",
+        "database_pattern": "{market}_candles.db",
+        "lookback_hours": 168,
+        "candle_interval": "1m",
+        "update_database": true
+    },
+    "strategies": {
+        "KRW-BTC": {
+            "strategy": "bollinger_bands",
+            "parameters_file": "results/optimization/bollinger_bands/KRW-BTC_best_params.json",
+            "parameters": {
+                "window": 20,
+                "num_std": 2.0,
+                "entry_threshold": 1.0,
+                "exit_threshold": 0.5
+            }
+        },
+        "KRW-ETH": {
+            "strategy": "vwap",
+            "parameters_file": "results/optimization/vwap/KRW-ETH_best_params.json",
+            "parameters": {
+                "window": 24,
+                "volume_factor": 1.0,
+                "entry_threshold": 0.015,
+                "exit_threshold": 0.005
+            }
+        },
+        "KRW-SOL": {
+            "strategy": "supertrend",
+            "parameters_file": "results/optimization/supertrend/KRW-SOL_best_params.json",
+            "parameters": {
+                "atr_period": 10,
+                "multiplier": 3.0
+            }
+        },
+        "KRW-ADA": {
+            "strategy": "mt_macd",
+            "parameters_file": "results/optimization/mt_macd/KRW-ADA_best_params.json",
+            "parameters": {
+                "fast_period": 12,
+                "slow_period": 26,
+                "signal_period": 9,
+                "timeframe_weights": {
+                    "1m": 0.2,
+                    "5m": 0.3,
+                    "15m": 0.5
+                }
+            }
+        }
+    },
+    "risk_management": {
+        "dynamic_risk": {
+            "regime_parameters": {
+                "trending_up": {
+                    "stop_loss": {
+                        "base_pct": 0.02,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 1.5,
+                        "order_type": "stop_limit",
+                        "limit_offset_pct": 0.001
+                    },
+                    "take_profit": {
+                        "base_pct": 0.06,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 3.0,
+                        "order_type": "limit",
+                        "partial_exits": [
+                            {"pct": 0.03, "size": 0.3},
+                            {"pct": 0.05, "size": 0.3},
+                            {"pct": 0.08, "size": 0.4}
+                        ]
+                    },
+                    "trailing_stop": {
+                        "enabled": true,
+                        "activation_pct": 0.02,
+                        "trail_pct": 0.015,
+                        "order_type": "stop_market",
+                        "tighten_on_momentum": true,
+                        "momentum_trail_pct": 0.01
+                    }
+                },
+                "trending_down": {
+                    "stop_loss": {
+                        "base_pct": 0.015,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 1.0,
+                        "order_type": "stop_market",
+                        "limit_offset_pct": 0.0
+                    },
+                    "take_profit": {
+                        "base_pct": 0.03,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 1.5,
+                        "order_type": "limit",
+                        "partial_exits": [
+                            {"pct": 0.015, "size": 0.5},
+                            {"pct": 0.025, "size": 0.3},
+                            {"pct": 0.04, "size": 0.2}
+                        ]
+                    },
+                    "trailing_stop": {
+                        "enabled": true,
+                        "activation_pct": 0.01,
+                        "trail_pct": 0.008,
+                        "order_type": "stop_market",
+                        "tighten_on_momentum": false
+                    }
+                },
+                "sideways": {
+                    "stop_loss": {
+                        "base_pct": 0.01,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 0.8,
+                        "order_type": "stop_limit",
+                        "limit_offset_pct": 0.0005
+                    },
+                    "take_profit": {
+                        "base_pct": 0.02,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 1.2,
+                        "order_type": "limit",
+                        "partial_exits": [
+                            {"pct": 0.01, "size": 0.5},
+                            {"pct": 0.015, "size": 0.3},
+                            {"pct": 0.025, "size": 0.2}
+                        ]
+                    },
+                    "trailing_stop": {
+                        "enabled": false,
+                        "activation_pct": 0.015,
+                        "trail_pct": 0.005,
+                        "order_type": "stop_limit"
+                    }
+                },
+                "volatile": {
+                    "stop_loss": {
+                        "base_pct": 0.025,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 2.0,
+                        "order_type": "stop_market",
+                        "limit_offset_pct": 0.0
+                    },
+                    "take_profit": {
+                        "base_pct": 0.04,
+                        "volatility_adjusted": true,
+                        "atr_multiplier": 2.0,
+                        "order_type": "limit",
+                        "partial_exits": [
+                            {"pct": 0.02, "size": 0.4},
+                            {"pct": 0.035, "size": 0.4},
+                            {"pct": 0.05, "size": 0.2}
+                        ]
+                    },
+                    "trailing_stop": {
+                        "enabled": true,
+                        "activation_pct": 0.015,
+                        "trail_pct": 0.02,
+                        "order_type": "stop_market",
+                        "tighten_on_momentum": false
+                    }
+                }
+            }
+        },
+        "var_risk": {
+            "var_config": {
+                "confidence_level": 0.95,
+                "lookback_days": 252,
+                "method": "historical",
+                "update_frequency": 60,
+                "use_ewma": true,
+                "ewma_lambda": 0.94,
+                "monte_carlo_simulations": 10000,
+                "use_cornish_fisher": true
+            },
+            "risk_limits": {
+                "daily_var_multiplier": 2.0,
+                "daily_cvar_multiplier": 1.5,
+                "intraday_var_multiplier": 1.0,
+                "use_dynamic_limits": true,
+                "min_var_limit_pct": 0.02,
+                "max_var_limit_pct": 0.10,
+                "consecutive_breach_limit": 3,
+                "breach_cooldown_hours": 24
+            },
+            "position_limits": {
+                "max_position_var_contribution": 0.3,
+                "concentration_penalty": true,
+                "correlation_adjustment": true,
+                "stress_test_multiplier": 3.0
+            },
+            "actions": {
+                "var_breach_action": "reduce_positions",
+                "position_reduction_pct": 0.5,
+                "stop_new_trades_at_pct": 0.8,
+                "force_close_at_pct": 1.2,
+                "gradual_reduction": true,
+                "prioritize_losing_positions": true
+            },
+            "regime_adjustments": {
+                "volatile_market_multiplier": 0.7,
+                "trending_market_multiplier": 1.2,
+                "sideways_market_multiplier": 1.0,
+                "crisis_mode_multiplier": 0.5
+            }
+        },
+        "position_sizing": {
+            "base_position_size_pct": 5.0,
+            "min_position_size_pct": 1.0,
+            "max_position_size_pct": 20.0,
+            "volatility_adjustment": true,
+            "atr_lookback": 14,
+            "signal_strength_multiplier": 1.5,
+            "trend_strength_multiplier": 1.2,
+            "regime_adjustments": {
+                "trending_up": 1.2,
+                "trending_down": 0.8,
+                "sideways": 0.7,
+                "volatile": 0.5
+            },
+            "correlation_penalty": true,
+            "concentration_limit": 30.0
+        },
+        "signal_strength": {
+            "indicators_weight": {
+                "rsi": 0.2,
+                "macd": 0.2,
+                "atr": 0.1,
+                "volume_ratio": 0.15,
+                "bb_position": 0.15,
+                "ma_crossover": 0.2
+            },
+            "regime_thresholds": {
+                "trending_up": 0.6,
+                "trending_down": 0.6,
+                "sideways": 0.7,
+                "volatile": 0.8
+            }
+        },
+        "market_regime": {
+            "adx_period": 14,
+            "ma_periods": [10, 20, 50, 100],
+            "bb_period": 20,
+            "bb_std": 2,
+            "atr_period": 14,
+            "volume_period": 20,
+            "choppiness_period": 14,
+            "lookback_period": 100,
+            "adx_trend_threshold": 25,
+            "adx_strong_threshold": 40,
+            "volatility_high_threshold": 2.0,
+            "volatility_low_threshold": 0.5,
+            "volume_spike_threshold": 2.0,
+            "choppiness_sideways_threshold": 61.8,
+            "weights": {
+                "adx": 0.25,
+                "ma_alignment": 0.20,
+                "volatility": 0.20,
+                "volume": 0.10,
+                "choppiness": 0.15,
+                "statistical": 0.10
+            }
+        }
+    }
+}
