@@ -30,77 +30,69 @@ class FibonacciRetracementStrategy(BaseStrategy):
         )
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Fibonacci levels and related indicators"""
+        """Calculate Fibonacci levels and related indicators - optimized version"""
         # Parameters
         swing_period = self.parameters.get('swing_period', 20)
         fib_proximity = self.parameters.get('fib_proximity', 0.003)  # 0.3% proximity
         
-        # Fibonacci retracement levels
-        fib_levels = [0.236, 0.382, 0.5, 0.618, 0.786]
+        # Calculate rolling swing highs and lows
+        df['swing_high'] = df['high_price'].rolling(window=swing_period).max()
+        df['swing_low'] = df['low_price'].rolling(window=swing_period).min()
         
-        # Initialize columns
-        for level in fib_levels:
-            df[f'fib_{int(level*100)}'] = np.nan
+        # Calculate rolling mean for trend detection
+        df['price_ma'] = df['trade_price'].rolling(window=swing_period).mean()
+        df['trend_direction'] = np.where(df['trade_price'] > df['price_ma'], 1, -1)
         
-        df['swing_high'] = np.nan
-        df['swing_low'] = np.nan
-        df['trend_direction'] = 0
+        # Calculate price range
+        df['price_range'] = df['swing_high'] - df['swing_low']
+        
+        # Fibonacci levels - using proper names
+        fib_levels = {'fib_236': 0.236, 'fib_382': 0.382, 'fib_500': 0.5, 'fib_618': 0.618, 'fib_786': 0.786}
+        
+        for name, level in fib_levels.items():
+            # In uptrend: retracements from high
+            uptrend_fib = df['swing_high'] - (df['price_range'] * level)
+            # In downtrend: retracements from low  
+            downtrend_fib = df['swing_low'] + (df['price_range'] * level)
+            # Select based on trend
+            df[name] = np.where(df['trend_direction'] == 1, uptrend_fib, downtrend_fib)
+        
+        # Check proximity to any Fibonacci level
         df['near_fib_support'] = False
         df['near_fib_resistance'] = False
-        df['price_bouncing'] = False
-        df['price_rejecting'] = False
-        df['volume_confirmation'] = False
         
-        # Calculate swing highs and lows
-        for i in range(swing_period, len(df)):
-            window = df.iloc[i-swing_period:i]
+        for name in fib_levels.keys():
+            # Support: price above fib level in uptrend
+            support_condition = (
+                (df['trend_direction'] == 1) &
+                (df['trade_price'] > df[name]) &
+                (abs(df['trade_price'] - df[name]) / df[name] < fib_proximity)
+            )
+            df['near_fib_support'] = df['near_fib_support'] | support_condition
             
-            # Identify swing high and low
-            swing_high = window['high_price'].max()
-            swing_low = window['low_price'].min()
-            
-            df.loc[i, 'swing_high'] = swing_high
-            df.loc[i, 'swing_low'] = swing_low
-            
-            # Determine trend direction
-            if df.loc[i, 'trade_price'] > window['trade_price'].mean():
-                df.loc[i, 'trend_direction'] = 1  # Uptrend
-            else:
-                df.loc[i, 'trend_direction'] = -1  # Downtrend
-            
-            # Calculate Fibonacci levels
-            price_range = swing_high - swing_low
-            
-            if price_range > 0:
-                for level in fib_levels:
-                    if df.loc[i, 'trend_direction'] == 1:  # Uptrend - calculate retracements from high
-                        df.loc[i, f'fib_{int(level*100)}'] = swing_high - (price_range * level)
-                    else:  # Downtrend - calculate retracements from low
-                        df.loc[i, f'fib_{int(level*100)}'] = swing_low + (price_range * level)
-                
-                # Check proximity to Fibonacci levels
-                current_price = df.loc[i, 'trade_price']
-                
-                for level in fib_levels:
-                    fib_price = df.loc[i, f'fib_{int(level*100)}']
-                    
-                    if abs(current_price - fib_price) / fib_price < fib_proximity:
-                        if df.loc[i, 'trend_direction'] == 1 and current_price > fib_price:
-                            df.loc[i, 'near_fib_support'] = True
-                        elif df.loc[i, 'trend_direction'] == -1 and current_price < fib_price:
-                            df.loc[i, 'near_fib_resistance'] = True
-                
-                # Check for price action patterns
-                if i >= 3:  # Need at least 3 candles for pattern
-                    # Bouncing pattern (for support)
-                    if (df.loc[i-2, 'trade_price'] > df.loc[i-1, 'trade_price'] and 
-                        df.loc[i-1, 'trade_price'] < df.loc[i, 'trade_price']):
-                        df.loc[i, 'price_bouncing'] = True
-                    
-                    # Rejecting pattern (for resistance) 
-                    if (df.loc[i-2, 'trade_price'] < df.loc[i-1, 'trade_price'] and 
-                        df.loc[i-1, 'trade_price'] > df.loc[i, 'trade_price']):
-                        df.loc[i, 'price_rejecting'] = True
+            # Resistance: price below fib level in downtrend
+            resistance_condition = (
+                (df['trend_direction'] == -1) &
+                (df['trade_price'] < df[name]) &
+                (abs(df['trade_price'] - df[name]) / df[name] < fib_proximity)
+            )
+            df['near_fib_resistance'] = df['near_fib_resistance'] | resistance_condition
+        
+        # Price action patterns using vectorized operations
+        price_prev1 = df['trade_price'].shift(1)
+        price_prev2 = df['trade_price'].shift(2)
+        
+        # Bouncing pattern (V-shape)
+        df['price_bouncing'] = (
+            (price_prev2 > price_prev1) &
+            (price_prev1 < df['trade_price'])
+        )
+        
+        # Rejecting pattern (inverted V-shape)
+        df['price_rejecting'] = (
+            (price_prev2 < price_prev1) &
+            (price_prev1 > df['trade_price'])
+        )
         
         # Volume confirmation
         volume_ma = df['candle_acc_trade_volume'].rolling(window=20).mean()
@@ -143,8 +135,8 @@ class FibonacciRetracementStrategy(BaseStrategy):
         
         # Enhanced buy on strong Fibonacci levels (38.2% and 61.8%)
         strong_fib_buy = (
-            ((abs(df['trade_price'] - df['fib_38']) / df['fib_38'] < 0.003) |
-             (abs(df['trade_price'] - df['fib_61']) / df['fib_61'] < 0.003)) &
+            ((abs(df['trade_price'] - df['fib_382']) / df['fib_382'] < 0.003) |
+             (abs(df['trade_price'] - df['fib_618']) / df['fib_618'] < 0.003)) &
             df['price_bouncing'] &
             df['volume_confirmation'] &
             (df['rsi'] < rsi_oversold)
@@ -161,8 +153,8 @@ class FibonacciRetracementStrategy(BaseStrategy):
         
         # Enhanced sell on strong Fibonacci levels
         strong_fib_sell = (
-            ((abs(df['trade_price'] - df['fib_38']) / df['fib_38'] < 0.003) |
-             (abs(df['trade_price'] - df['fib_61']) / df['fib_61'] < 0.003)) &
+            ((abs(df['trade_price'] - df['fib_382']) / df['fib_382'] < 0.003) |
+             (abs(df['trade_price'] - df['fib_618']) / df['fib_618'] < 0.003)) &
             df['price_rejecting'] &
             df['volume_confirmation'] &
             (df['rsi'] > rsi_overbought)
@@ -175,14 +167,14 @@ class FibonacciRetracementStrategy(BaseStrategy):
         # Additional filter: Golden ratio (61.8%) special handling
         if self.parameters.get('use_golden_ratio', True):
             golden_ratio_support = (
-                (abs(df['trade_price'] - df['fib_61']) / df['fib_61'] < 0.002) &  # Very close to 61.8%
+                (abs(df['trade_price'] - df['fib_618']) / df['fib_618'] < 0.002) &  # Very close to 61.8%
                 (df['trend_direction'] == 1) &  # In uptrend
                 df['volume_confirmation'] &
                 (df['rsi'] < 40)
             )
             
             golden_ratio_resistance = (
-                (abs(df['trade_price'] - df['fib_61']) / df['fib_61'] < 0.002) &  # Very close to 61.8%
+                (abs(df['trade_price'] - df['fib_618']) / df['fib_618'] < 0.002) &  # Very close to 61.8%
                 (df['trend_direction'] == -1) &  # In downtrend
                 df['volume_confirmation'] &
                 (df['rsi'] > 60)
