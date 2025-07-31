@@ -63,7 +63,8 @@ quant-alpaca/
 ├── run_backtesting.sh                 # Main backtesting script (separate from optimization)
 ├── run_optimization.sh                # Unified strategy optimization script
 ├── OPTIMIZATION_GUIDE.md              # Comprehensive optimization guide
-└── test_adaptive_strategies.py        # Adaptive strategies test suite
+├── test_adaptive_strategies.py        # Adaptive strategies test suite
+└── test_enhanced_ensemble.py          # Enhanced ensemble strategy test suite
 ```
 
 ## Available Strategies
@@ -89,8 +90,8 @@ The project includes 23 implemented trading strategies:
 16. **aroon** - Aroon oscillator strategy
 
 ### Ensemble Strategies
-17. **ensemble** - Basic ensemble of multiple strategies
-18. **enhanced_ensemble** - **NEW** Advanced ensemble with microstructure regimes
+17. **ensemble** - **ENHANCED** Advanced ensemble with sophisticated regime detection and dynamic strategy allocation
+18. **enhanced_ensemble** - **NEW** Advanced ensemble with microstructure regimes and dual-regime detection
 
 ### High-Frequency Strategies (1-minute optimized)
 19. **hf_vwap** - High-frequency VWAP with microstructure features
@@ -122,12 +123,16 @@ The project includes 23 implemented trading strategies:
 - Dynamic parameter optimization
 - Comprehensive optimization results storage
 
-### Adaptive Trading Framework
-- **Rolling Parameter Optimization**: Automatic parameter reoptimization every 4 hours using 24-hour windows
-- **Market Regime Detection**: Automatic strategy switching based on trending_up, trending_down, sideways, volatile regimes
-- **Microstructure Regimes**: Advanced regime detection including trending_liquid, mean_reverting_illiquid, volatile_thin, etc.
-- **Dynamic Strategy Selection**: Enhanced ensemble automatically selects optimal strategies for current market conditions
-- **Parameter Stability Control**: Prevents excessive parameter changes through stability scoring
+### Enhanced Ensemble Trading System
+- **Sophisticated Market Regime Detection**: Multi-criteria regime detection with trending_up, trending_down, sideways, volatile classifications
+- **Real-time Performance Tracking**: Enhanced strategy performance tracker with confidence scoring and momentum analysis
+- **Dynamic Weight Adjustment**: Performance-based strategy weight allocation using exponential weighting and Sharpe ratio optimization
+- **Correlation-Adjusted Signal Aggregation**: Reduces weight of highly correlated strategies to improve diversification
+- **Enhanced Regime Transition Logic**: Supports both rapid and gradual transitions with oscillation prevention
+- **Multi-factor Position Sizing**: Combines regime confidence, strategy performance, volatility, and Kelly Criterion for optimal sizing
+- **Microstructure Regime Detection**: Advanced detection of trending_liquid, mean_reverting_illiquid, volatile_thin market conditions
+- **Adaptive Strategy Selection**: Dual-regime system (macro + microstructure) for optimal strategy selection
+- **Parameter Stability Control**: Prevents excessive parameter changes through stability scoring and performance validation
 
 ### High-Frequency Trading Features
 - **Microstructure Analysis**: Bid-ask spread estimation, volume clustering, liquidity scoring
@@ -182,6 +187,9 @@ pip install -r requirements.txt
 ./run_optimization.sh --strategy hf_vwap --market KRW-ETH
 ./run_optimization.sh --strategy adaptive_hf_vwap --market KRW-ETH
 
+# Standard ensemble with sophisticated regime detection
+./run_optimization.sh --strategy ensemble --market KRW-BTC
+
 # Enhanced ensemble with microstructure regimes
 ./run_optimization.sh --strategy enhanced_ensemble --market KRW-BTC
 
@@ -195,14 +203,14 @@ pip install -r requirements.txt
 
 ### Ensemble Trading
 ```bash
-# Run adaptive ensemble
-./run_backtesting.sh --ensemble adaptive
+# Run standard enhanced ensemble
+./run_backtesting.sh --strategy ensemble --market KRW-BTC
 
-# Run two-step ensemble
-./run_backtesting.sh --ensemble two-step
+# Run ensemble with microstructure regimes
+./run_backtesting.sh --strategy enhanced_ensemble --market KRW-BTC
 
-# Run hierarchical ensemble
-./run_backtesting.sh --ensemble hierarchical
+# Test ensemble on all markets
+./run_backtesting.sh --strategy ensemble --market all
 ```
 
 ### Configuration Files
@@ -259,6 +267,62 @@ pip install -r requirements.txt
 
 **Performance Rating System:**
 - ⭐ Poor to ⭐⭐⭐⭐⭐ Excellent based on return, Sharpe ratio, drawdown, and trade frequency
+
+## Ensemble Strategy Details
+
+### Enhanced Ensemble Features (ensemble.py)
+The enhanced ensemble strategy provides sophisticated regime-based strategy allocation with the following advanced capabilities:
+
+**Real-time Performance Tracking:**
+- Enhanced strategy performance tracker with exponential weighting
+- Confidence scoring based on win rate, Sharpe ratio, momentum, and consistency
+- Real-time P&L tracking for active positions
+- Performance-based dynamic weight adjustment using softmax normalization
+
+**Advanced Regime Detection:**
+- Multi-criteria regime change detection with confidence thresholds
+- Prevention of regime oscillation through history tracking
+- Support for both gradual and rapid regime transitions
+- Enhanced transition logic with emergency transition handling
+
+**Sophisticated Signal Aggregation:**
+- Correlation-adjusted signal aggregation to reduce strategy correlation
+- Dynamic weight calculation combining performance, confidence, and momentum
+- Adaptive signal thresholds based on regime confidence and strategy consensus
+- Multi-factor position sizing with Kelly Criterion integration
+
+**Risk Management:**
+- Regime-specific risk multipliers and position sizing
+- Volatility-based position adjustment
+- Market condition and regime confidence-based sizing
+- Comprehensive stop-loss and take-profit management
+
+### Enhanced Ensemble with Microstructure (enhanced_ensemble.py)
+Advanced ensemble combining macro and microstructure regime detection:
+
+**Dual Regime Detection:**
+- Macro regimes: trending_up, trending_down, sideways, volatile
+- Microstructure regimes: trending_liquid, trending_illiquid, mean_reverting_liquid, mean_reverting_illiquid, volatile_thin, stable_liquid, mixed
+- Combined regime analysis for optimal strategy selection
+
+**Microstructure Analysis:**
+- Volume clustering and acceleration analysis
+- Price momentum persistence calculation
+- Spread proxy estimation and volatility analysis
+- Price impact approximation and mean reversion tendency
+
+**Strategy Selection:**
+- Dynamic strategy pool based on regime preferences
+- Performance-based strategy ranking and selection
+- Adaptive weight calculation with confidence adjustment
+- Maximum active strategies limit with scoring thresholds
+
+### Testing and Validation
+- Comprehensive test suite: `test_enhanced_ensemble.py`
+- Performance tracker validation with multiple trade scenarios
+- Regime transition testing with different confidence levels
+- Benchmark comparison between basic and enhanced implementations
+- Signal generation and position sizing validation
 
 ## Key Considerations
 

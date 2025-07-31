@@ -26,7 +26,8 @@
       "Bash(find:*)",
       "Bash(killall:*)",
       "Bash(./run_fast_optimization.sh:*)",
-      "Bash(./run_optimization.sh:*)"
+      "Bash(./run_optimization.sh:*)",
+      "Bash(dos2unix:*)"
     ],
     "deny": []
   }

@@ -499,6 +499,9 @@ class BacktestEngine:
         # Store prepared data for regime analysis
         self.prepared_data = prepared_data
         
+        # Calculate Buy & Hold benchmark
+        self.buy_hold_data = self._calculate_buy_hold_benchmark(data)
+        
         # Get all timestamps and sort them
         all_timestamps = set()
         for df in prepared_data.values():
@@ -876,12 +879,121 @@ class BacktestEngine:
             'total_trades': len(self.trade_history),
             'portfolio_history': self.portfolio_value_history,
             'trade_history': self.trade_history,
+            'buy_hold_benchmark': self.buy_hold_data if hasattr(self, 'buy_hold_data') else {},
             **var_metrics,  # Add VaR metrics if available
             **regime_analysis,  # Add regime analysis if available
             **adaptive_info  # Add adaptive strategy information if available
         }
         
         return results
+    
+    def _calculate_buy_hold_benchmark(self, data: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
+        """Calculate Buy & Hold benchmark performance"""
+        if not data:
+            return {'total_return': 0, 'final_value': self.initial_balance}
+        
+        # For multi-market portfolios, allocate equally among all markets
+        allocation_per_market = self.initial_balance / len(data)
+        
+        buy_hold_values = []
+        buy_hold_returns = {}
+        
+        # Get all timestamps
+        all_timestamps = set()
+        for df in data.values():
+            all_timestamps.update(df.index)
+        sorted_timestamps = sorted(list(all_timestamps))
+        
+        # Initialize buy & hold positions at first timestamp
+        initial_prices = {}
+        initial_shares = {}
+        
+        for market, df in data.items():
+            if len(df) > 0:
+                first_price = df['trade_price'].iloc[0]
+                initial_prices[market] = first_price
+                # Calculate shares bought with equal allocation
+                initial_shares[market] = allocation_per_market / first_price
+                buy_hold_returns[market] = []
+        
+        # Calculate buy & hold value at each timestamp
+        for timestamp in sorted_timestamps:
+            total_value = 0
+            
+            for market, df in data.items():
+                if timestamp in df.index and market in initial_shares:
+                    current_price = df.loc[timestamp]['trade_price']
+                    # Value = shares * current price
+                    market_value = initial_shares[market] * current_price
+                    total_value += market_value
+                    
+                    # Store individual market return
+                    if market in initial_prices:
+                        market_return = (current_price / initial_prices[market]) - 1
+                        buy_hold_returns[market].append(market_return)
+            
+            buy_hold_values.append({
+                'timestamp': timestamp,
+                'portfolio_value': total_value
+            })
+        
+        # Calculate final metrics
+        if buy_hold_values:
+            final_value = buy_hold_values[-1]['portfolio_value']
+            total_return = (final_value - self.initial_balance) / self.initial_balance
+            
+            # Calculate volatility
+            portfolio_values = [bh['portfolio_value'] for bh in buy_hold_values]
+            returns_series = pd.Series(portfolio_values).pct_change().dropna()
+            
+            # Annualized volatility (similar to strategy calculation)
+            if len(returns_series) > 1:
+                trading_days = len(returns_series) / 1440  # Assuming minute data
+                days_per_year = 365
+                daily_returns = returns_series.groupby(returns_series.index // 1440).sum()
+                if len(daily_returns) > 1:
+                    daily_volatility = daily_returns.std()
+                    volatility = daily_volatility * np.sqrt(days_per_year)
+                else:
+                    volatility = returns_series.std() * np.sqrt(252 * 6.5 * 60)
+            else:
+                volatility = 0
+            
+            # Calculate Sharpe ratio
+            if trading_days > 0:
+                annualized_return = (1 + total_return) ** (365 / max(trading_days, 1)) - 1
+            else:
+                annualized_return = 0
+                
+            sharpe_ratio = annualized_return / volatility if volatility > 0 else 0
+            
+            # Calculate max drawdown
+            portfolio_series = pd.Series(portfolio_values)
+            running_max = portfolio_series.expanding().max()
+            drawdown = (portfolio_series - running_max) / running_max
+            max_drawdown = drawdown.min()
+            
+        else:
+            final_value = self.initial_balance
+            total_return = 0
+            volatility = 0
+            sharpe_ratio = 0
+            max_drawdown = 0
+            annualized_return = 0
+        
+        return {
+            'final_value': final_value,
+            'total_return': total_return,
+            'total_return_pct': total_return * 100,
+            'volatility': volatility,
+            'sharpe_ratio': sharpe_ratio,
+            'max_drawdown': max_drawdown,
+            'max_drawdown_pct': max_drawdown * 100,
+            'annualized_return': annualized_return,
+            'annualized_return_pct': annualized_return * 100,
+            'portfolio_history': buy_hold_values,
+            'individual_returns': buy_hold_returns
+        }
     
     def _calculate_market_correlation(self, market: str, current_prices: Dict[str, float]) -> float:
         """Calculate correlation of market with overall portfolio"""

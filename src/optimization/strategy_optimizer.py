@@ -237,9 +237,16 @@ class StrategyOptimizer:
         best_params = study.best_params
         best_value = study.best_value
         
+        # Count trials with zero trades (score of -100.0)
+        zero_trade_trials = sum(1 for trial in study.trials if trial.value == -100.0)
+        successful_trials = len(study.trials) - zero_trade_trials
+        
         self.logger.info(f"Best parameters for {strategy_name} on {market}: {best_params}")
         self.logger.info(f"Best {self.config['optimization']['objective']}: {best_value:.4f}")
-        self.logger.info(f"Completed {len(study.trials)} trials")
+        self.logger.info(f"Completed {len(study.trials)} trials ({successful_trials} with trades, {zero_trade_trials} with zero trades)")
+        
+        if zero_trade_trials > len(study.trials) * 0.8:
+            self.logger.warning(f"⚠️  {zero_trade_trials}/{len(study.trials)} trials had zero trades - consider relaxing strategy parameters!")
         
         # Validate on test set
         test_results = self._validate_params(strategy_name, best_params, test_data, [market])
@@ -256,7 +263,8 @@ class StrategyOptimizer:
                 "max_drawdown": test_results.get("max_drawdown", -999),
                 "total_trades": test_results.get("total_trades", 0),
                 "calmar_ratio": test_results.get("calmar_ratio", 0),
-                "volatility": test_results.get("volatility", 0)
+                "volatility": test_results.get("volatility", 0),
+                "buy_hold_benchmark": test_results.get("buy_hold_benchmark", {})
             }
         
         optimization_results = {
@@ -366,6 +374,22 @@ class StrategyOptimizer:
                 self.logger.info(f"Ensemble backtest completed, calculating metrics...")
                 
             performance = self._calculate_performance_metrics(results)
+            
+            # Check for zero trades and log detailed information
+            total_trades = performance.get('total_trades', 0)
+            if total_trades == 0:
+                self.logger.warning(f"🚨 Trial #{trial.number + 1} for {strategy_name} generated NO TRADES!")
+                self.logger.warning(f"   Parameters: {params}")
+                
+                # Log additional debug info for mt_bollinger strategy
+                if strategy_name == "mt_bollinger":
+                    self.logger.warning(f"   Thresholds: lower={params.get('lower_threshold', 'N/A')}, upper={params.get('upper_threshold', 'N/A')}")
+                    self.logger.warning(f"   Signal strength requirement: {params.get('min_signal_strength', 'N/A')}")
+                    self.logger.warning(f"   Volume confirmation: {params.get('min_volume_confirmation', 'N/A')}")
+                    self.logger.warning(f"   Alignment required: {params.get('require_timeframe_alignment', 'N/A')}")
+                
+                # Return a strong penalty for no trades
+                return -100.0
             
             # Get objective value
             objective_metric = self.config["optimization"]["objective"]
@@ -678,11 +702,17 @@ class StrategyOptimizer:
                         test_return = test_perf.get("total_return", -999)
                         test_drawdown = test_perf.get("max_drawdown", -999)
                         test_trades = test_perf.get("total_trades", 0)
+                        
+                        # Extract Buy & Hold benchmark
+                        bh_data = test_perf.get("buy_hold_benchmark", {})
+                        bh_return = bh_data.get("total_return", 0)
+                        excess_return = test_return - bh_return if test_return != -999 and bh_return != 0 else 0
                     else:
                         test_sharpe = test_perf if isinstance(test_perf, (int, float)) else -999
                         test_return = -999
                         test_drawdown = -999
                         test_trades = 0
+                        excess_return = 0
                     
                     summary_data.append({
                         "Strategy": strategy_name,
@@ -691,6 +721,8 @@ class StrategyOptimizer:
                         "Train Sharpe": f"{train_perf:.4f}" if train_perf != -999 else "N/A",
                         "Test Sharpe": f"{test_sharpe:.4f}" if test_sharpe != -999 else "N/A",
                         "Test Return": f"{test_return:.2%}" if test_return != -999 else "N/A",
+                        "B&H Return": f"{bh_return:.2%}" if bh_return != 0 else "N/A",
+                        "Excess Return": f"{excess_return:.2%}" if excess_return != 0 else "N/A",
                         "Max Drawdown": f"{test_drawdown:.2%}" if test_drawdown != -999 else "N/A",
                         "Total Trades": test_trades
                     })

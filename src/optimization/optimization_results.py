@@ -97,7 +97,12 @@ class OptimizationResultsDisplay:
                 '변동성 (Volatility)',
                 'Total Trades',
                 '승률 (추정)',
-                '평균거래당 수익'
+                '평균거래당 수익',
+                '',  # Separator
+                'Buy & Hold 누적수익률',
+                'Buy & Hold Sharpe Ratio',
+                'Buy & Hold MDD',
+                '전략 vs B&H 초과수익률'
             ])
             
             # Calculate additional metrics
@@ -116,6 +121,13 @@ class OptimizationResultsDisplay:
             estimated_win_rate = max(0.3, min(0.7, 0.5 + sharpe_ratio * 0.1)) if sharpe_ratio != 0 else 0.5
             avg_profit_per_trade = profit_loss / max(1, total_trades)
             
+            # Extract Buy & Hold benchmark data if available
+            buy_hold_data = optimization_results.get('buy_hold_benchmark', {})
+            bh_total_return = buy_hold_data.get('total_return', 0)
+            bh_sharpe_ratio = buy_hold_data.get('sharpe_ratio', 0)
+            bh_max_drawdown = buy_hold_data.get('max_drawdown', 0)
+            excess_return = total_return - bh_total_return
+            
             test_values.extend([
                 self.format_currency(profit_loss),
                 self.format_currency(final_value),
@@ -130,20 +142,25 @@ class OptimizationResultsDisplay:
                 self.format_percentage(volatility),
                 f"{total_trades}",
                 self.format_percentage(estimated_win_rate),
-                self.format_currency(avg_profit_per_trade)
+                self.format_currency(avg_profit_per_trade),
+                '',  # Separator
+                self.format_percentage(bh_total_return),
+                self.format_ratio(bh_sharpe_ratio),
+                self.format_percentage(bh_max_drawdown),
+                self.format_percentage(excess_return)
             ])
         else:
             test_metrics = ['Test Score']
             test_values = [self.format_ratio(test_performance) if test_performance else 'N/A']
         
-        # Create DataFrames
+        # Create DataFrames - proper row x column format
         train_df = pd.DataFrame({
-            'Training Results': train_data['Metric'],
+            'Metric': train_data['Metric'],
             'Value': train_data['Value']
         })
         
         test_df = pd.DataFrame({
-            'Test Results': test_metrics,
+            'Metric': test_metrics,
             'Value': test_values
         })
         
@@ -231,24 +248,32 @@ class OptimizationResultsDisplay:
             print("\n🎯 PERFORMANCE SUMMARY")
             print("-" * 50)
             
-            # Performance rating
+            # Performance rating (now includes Buy & Hold comparison)
             score = 0
             if total_return > 0.05: score += 1  # 5%+ return
             if sharpe_ratio > 1.0: score += 1   # Sharpe > 1
             if max_drawdown > -0.1: score += 1  # MDD < 10%
             if total_trades >= 10: score += 1   # Sufficient trades
+            if excess_return > 0.02: score += 1  # 2%+ excess return over Buy & Hold
             
             rating_map = {0: "⭐ Poor", 1: "⭐⭐ Below Average", 2: "⭐⭐⭐ Average", 
-                         3: "⭐⭐⭐⭐ Good", 4: "⭐⭐⭐⭐⭐ Excellent"}
+                         3: "⭐⭐⭐⭐ Good", 4: "⭐⭐⭐⭐⭐ Excellent", 5: "⭐⭐⭐⭐⭐ Exceptional"}
             
             print(f"Performance Rating: {rating_map.get(score, '⭐ Poor')}")
             
-            # Key insights
+            # Key insights (now includes Buy & Hold comparisons)
             insights = []
             if total_return > 0.1:
                 insights.append("✅ Strong returns generated")
             elif total_return < -0.05:
                 insights.append("⚠️ Negative returns - consider parameter adjustment")
+            
+            if excess_return > 0.05:
+                insights.append("✅ Significantly outperformed Buy & Hold")
+            elif excess_return > 0.02:
+                insights.append("✅ Moderately outperformed Buy & Hold") 
+            elif excess_return < -0.02:
+                insights.append("⚠️ Underperformed Buy & Hold - strategy may not add value")
             
             if sharpe_ratio > 1.5:
                 insights.append("✅ Excellent risk-adjusted returns")

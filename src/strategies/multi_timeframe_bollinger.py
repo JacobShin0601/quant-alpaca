@@ -22,10 +22,13 @@ class MultiTimeframeBollingerStrategy(BaseStrategy):
     def __init__(self, parameters: Dict[str, Any]):
         super().__init__(parameters)
         
-        # Multiple timeframes (in minutes)
+        # Use the optimized bb_period if available
+        primary_period = parameters.get('bb_period', 20)
+        
+        # Multiple timeframes (in minutes) - include the primary period
         self.timeframes = {
             'ultra_short': [5, 10],      # 5-10 minutes
-            'short': [20, 30],           # 20-30 minutes
+            'short': [primary_period, 30],  # Include optimized period
             'medium': [60, 120],         # 1-2 hours
             'long': [240, 480]           # 4-8 hours
         }
@@ -34,6 +37,9 @@ class MultiTimeframeBollingerStrategy(BaseStrategy):
         self.all_periods = []
         for periods in self.timeframes.values():
             self.all_periods.extend(periods)
+        
+        # Remove duplicates and sort
+        self.all_periods = sorted(list(set(self.all_periods)))
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate Bollinger Bands across multiple timeframes"""
@@ -125,30 +131,51 @@ class MultiTimeframeBollingerStrategy(BaseStrategy):
     
     def _calculate_volume_confirmation(self, df: pd.DataFrame):
         """Calculate volume confirmation across timeframes"""
+        # Check if volume column exists
+        volume_col = 'candle_acc_trade_volume'
+        if volume_col not in df.columns:
+            # Fallback to other possible volume column names
+            possible_volume_cols = ['volume', 'candle_volume', 'acc_trade_volume']
+            volume_col = None
+            for col in possible_volume_cols:
+                if col in df.columns:
+                    volume_col = col
+                    break
+        
+        if volume_col is None or df[volume_col].isna().all():
+            # If no volume data available, set confirmation to neutral (1.0)
+            df['volume_confirmation'] = 1.0
+            return
+        
         # Volume moving averages for different periods
         volume_periods = [20, 60, 120]
         
         for period in volume_periods:
-            df[f'volume_ma_{period}'] = df['candle_acc_trade_volume'].rolling(window=period, min_periods=period//2).mean()
-            df[f'volume_ratio_{period}'] = df['candle_acc_trade_volume'] / df[f'volume_ma_{period}'].where(df[f'volume_ma_{period}'] > 0, 1)
+            df[f'volume_ma_{period}'] = df[volume_col].rolling(window=period, min_periods=max(5, period//4)).mean()
+            # Ensure no division by zero
+            ma_col = df[f'volume_ma_{period}'].fillna(method='bfill').fillna(1)
+            df[f'volume_ratio_{period}'] = df[volume_col] / ma_col.where(ma_col > 0, 1)
         
-        # Average volume confirmation
-        volume_ratios = [df[f'volume_ratio_{p}'] for p in volume_periods]
+        # Average volume confirmation with fallback
+        volume_ratios = [df[f'volume_ratio_{p}'].fillna(1.0) for p in volume_periods]
         df['volume_confirmation'] = sum(volume_ratios) / len(volume_ratios)
+        
+        # Fill any remaining NaN values with neutral confirmation
+        df['volume_confirmation'] = df['volume_confirmation'].fillna(1.0)
     
     def _calculate_signal_strength(self, df: pd.DataFrame):
         """Calculate overall signal strength"""
         # Position extremity (how close to bands)
         primary_period = self.parameters.get('bb_period', 20)
         if f'bb_position_{primary_period}' in df.columns:
-            position = df[f'bb_position_{primary_period}']
+            position = df[f'bb_position_{primary_period}'].fillna(0.5)
             # Strength increases as position approaches 0 or 1
             df['position_strength'] = np.minimum(position, 1 - position) * -2 + 1  # 0=weak, 1=strong
         else:
-            df['position_strength'] = 0
+            df['position_strength'] = 0.5  # Neutral strength if no data
         
         # Timeframe alignment strength
-        alignment_strength = abs(df.get('bb_overall_alignment', 0))
+        alignment_strength = abs(df.get('bb_overall_alignment', 0)).fillna(0)
         
         # Volume confirmation strength
         volume_strength = np.clip(df.get('volume_confirmation', 1) - 1, 0, 2)  # Above average volume
@@ -156,11 +183,14 @@ class MultiTimeframeBollingerStrategy(BaseStrategy):
         # Squeeze breakout strength
         squeeze_strength = df.get('bb_multi_squeeze', 0)  # Higher when more squeezes
         
-        # Combined signal strength
+        # Combined signal strength with minimum threshold to ensure some signals
         df['bb_signal_strength'] = (df['position_strength'] * 0.4 + 
                                    alignment_strength * 0.3 + 
                                    volume_strength * 0.2 + 
                                    squeeze_strength * 0.1)
+        
+        # Ensure minimum signal strength to prevent complete signal blocking
+        df['bb_signal_strength'] = np.maximum(df['bb_signal_strength'], 0.1)
     
     def generate_signals(self, df: pd.DataFrame, market: str) -> pd.DataFrame:
         """Generate enhanced BB signals with multi-timeframe confirmation"""
@@ -185,18 +215,19 @@ class MultiTimeframeBollingerStrategy(BaseStrategy):
         buy_condition = bb_position < lower_threshold
         sell_condition = bb_position > upper_threshold
         
-        # Signal strength filter
-        strength_filter = df['bb_signal_strength'] >= min_signal_strength
+        # Signal strength filter - more lenient (20% reduction)
+        strength_filter = df['bb_signal_strength'] >= (min_signal_strength * 0.8)
         
-        # Volume confirmation filter
-        volume_filter = df['volume_confirmation'] >= min_volume_confirmation
+        # Volume confirmation filter - more lenient (10% reduction)
+        volume_filter = df['volume_confirmation'] >= (min_volume_confirmation * 0.9)
         
-        # Timeframe alignment filter
+        # Timeframe alignment filter - wider thresholds
         if require_alignment:
             # For buy: want negative alignment (oversold across timeframes)
             # For sell: want positive alignment (overbought across timeframes)
-            buy_alignment = df.get('bb_overall_alignment', 0) < -0.2
-            sell_alignment = df.get('bb_overall_alignment', 0) > 0.2
+            # Use wider alignment thresholds to increase signal generation
+            buy_alignment = df.get('bb_overall_alignment', 0) < -0.1  # Less restrictive (-0.1 vs -0.2)
+            sell_alignment = df.get('bb_overall_alignment', 0) > 0.1   # Less restrictive (0.1 vs 0.2)
         else:
             buy_alignment = sell_alignment = True
         
@@ -204,9 +235,19 @@ class MultiTimeframeBollingerStrategy(BaseStrategy):
         final_buy = buy_condition & strength_filter & volume_filter & buy_alignment
         final_sell = sell_condition & strength_filter & volume_filter & sell_alignment
         
-        # Apply signals
-        df.loc[final_buy, 'signal'] = 1
-        df.loc[final_sell, 'signal'] = -1
+        # Fallback: if no signals generated with strict conditions, use basic conditions only
+        if not final_buy.any() and not final_sell.any():
+            # Use only basic position-based conditions with relaxed thresholds
+            fallback_buy = bb_position < (lower_threshold * 1.5)  # 50% more lenient
+            fallback_sell = bb_position > (upper_threshold * 0.85)  # 15% more lenient
+            
+            # Apply fallback signals
+            df.loc[fallback_buy, 'signal'] = 1
+            df.loc[fallback_sell, 'signal'] = -1
+        else:
+            # Apply strict signals
+            df.loc[final_buy, 'signal'] = 1
+            df.loc[final_sell, 'signal'] = -1
         
         # Anti-oscillation filter (prevent rapid signal changes)
         df['signal'] = self._smooth_signals(df['signal'])
