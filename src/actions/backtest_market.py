@@ -25,8 +25,10 @@ from strategies import STRATEGIES
 # Import optimizer
 try:
     from optimization.strategy_optimizer import StrategyOptimizer
+    from optimization.optimization_results import OptimizationResultsDisplay
 except ImportError:
     StrategyOptimizer = None
+    OptimizationResultsDisplay = None
 
 
 class MultiStrategyBacktester:
@@ -575,6 +577,33 @@ class MultiStrategyBacktester:
         
         # Save optimization results
         optimizer.save_results()
+        
+        # Display detailed optimization results
+        if OptimizationResultsDisplay and best_params:
+            results_display = OptimizationResultsDisplay()
+            market_name = markets[0] if len(markets) == 1 else "multi_market"
+            
+            # Get detailed results from optimizer - best_params is actually the full results dict
+            if isinstance(best_params, dict) and 'best_params' in best_params:
+                optimization_results = best_params
+            else:
+                # Fallback for older format
+                optimization_results = {
+                    'best_params': best_params,
+                    'train_performance': getattr(optimizer, 'best_train_score', 0),
+                    'test_performance': getattr(optimizer, 'best_test_performance', {}),
+                    'n_trials': getattr(optimizer, 'total_trials', 50),
+                    'optimization_history': getattr(optimizer, 'optimization_history', [])
+                }
+            
+            results_display.display_optimization_results(
+                optimization_results, strategy_name, market_name
+            )
+            
+            # Save detailed results
+            results_display.save_results_to_file(
+                optimization_results, strategy_name, market_name
+            )
         
         print(f"\n✅ Optimization completed. Results saved to results/optimization/")
         

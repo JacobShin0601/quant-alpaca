@@ -113,6 +113,14 @@ class BacktestEngine:
         # Initialize strategy
         strategy_config = config['strategy']
         self.strategy = get_strategy(strategy_config['name'], strategy_config['parameters'])
+        
+        # Check if strategy has adaptive capabilities
+        self.strategy_is_adaptive = hasattr(self.strategy, 'enable_adaptation') and getattr(self.strategy, 'enable_adaptation', False)
+        if self.strategy_is_adaptive:
+            self.logger.info(f"Using adaptive strategy: {strategy_config['name']}")
+        
+        # Track adaptive parameter changes
+        self.adaptive_parameter_history = []
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate technical indicators using strategy"""
@@ -120,7 +128,11 @@ class BacktestEngine:
     
     def generate_signals(self, df: pd.DataFrame, market: str) -> pd.DataFrame:
         """Generate buy/sell signals using strategy"""
-        return self.strategy.generate_signals(df, market)
+        # For adaptive strategies, use adaptive signal generation if available
+        if self.strategy_is_adaptive and hasattr(self.strategy, 'generate_signals_adaptive'):
+            return self.strategy.generate_signals_adaptive(df, market)
+        else:
+            return self.strategy.generate_signals(df, market)
     
     def get_market_type(self, market: str) -> str:
         """Determine market type (krw, btc, usdt) from market string"""
@@ -833,6 +845,23 @@ class BacktestEngine:
             except Exception as e:
                 self.logger.warning(f"Failed to analyze regime performance: {e}")
         
+        # Collect adaptive strategy information
+        adaptive_info = {}
+        if self.strategy_is_adaptive:
+            adaptive_info['adaptive_strategy'] = {
+                'strategy_name': self.strategy.__class__.__name__,
+                'adaptation_enabled': getattr(self.strategy, 'enable_adaptation', False),
+                'parameter_history': getattr(self.strategy, 'parameter_history', []),
+                'adaptation_status': self.strategy.get_adaptation_status() if hasattr(self.strategy, 'get_adaptation_status') else {},
+                'parameter_changes': self.adaptive_parameter_history
+            }
+            
+            # Add enhanced ensemble specific information
+            if hasattr(self.strategy, 'strategy_performance'):
+                adaptive_info['adaptive_strategy']['strategy_performance'] = {
+                    k: v[-10:] if v else [] for k, v in self.strategy.strategy_performance.items()
+                }
+        
         results = {
             'initial_balance': self.initial_balance,
             'final_value': final_value,
@@ -848,7 +877,8 @@ class BacktestEngine:
             'portfolio_history': self.portfolio_value_history,
             'trade_history': self.trade_history,
             **var_metrics,  # Add VaR metrics if available
-            **regime_analysis  # Add regime analysis if available
+            **regime_analysis,  # Add regime analysis if available
+            **adaptive_info  # Add adaptive strategy information if available
         }
         
         return results

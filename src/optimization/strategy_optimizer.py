@@ -259,7 +259,7 @@ class StrategyOptimizer:
                 "volatility": test_results.get("volatility", 0)
             }
         
-        return {
+        optimization_results = {
             "best_params": best_params,
             "train_performance": best_value,
             "test_performance": clean_test_results,
@@ -272,6 +272,14 @@ class StrategyOptimizer:
                 } for trial in sorted(study.trials, key=lambda t: t.value, reverse=True)[:10]
             ]
         }
+        
+        # Store for access from backtest_market.py
+        self.best_train_score = best_value
+        self.best_test_performance = clean_test_results
+        self.total_trials = len(study.trials)
+        self.optimization_history = optimization_results["optimization_history"]
+        
+        return optimization_results
     
     def optimize_all_strategies(self, data: pd.DataFrame, markets: List[str], 
                               exclude: List[str] = None) -> Dict[str, Dict]:
