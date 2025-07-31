@@ -596,8 +596,9 @@ class MultiStrategyBacktester:
                     'optimization_history': getattr(optimizer, 'optimization_history', [])
                 }
             
+            # Display compact summary by default
             results_display.display_optimization_results(
-                optimization_results, strategy_name, market_name
+                optimization_results, strategy_name, market_name, show_details=False
             )
             
             # Save detailed results

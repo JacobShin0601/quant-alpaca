@@ -122,7 +122,7 @@ class OptimizationResultsDisplay:
             avg_profit_per_trade = profit_loss / max(1, total_trades)
             
             # Extract Buy & Hold benchmark data if available
-            buy_hold_data = optimization_results.get('buy_hold_benchmark', {})
+            buy_hold_data = test_performance.get('buy_hold_benchmark', {})
             bh_total_return = buy_hold_data.get('total_return', 0)
             bh_sharpe_ratio = buy_hold_data.get('sharpe_ratio', 0)
             bh_max_drawdown = buy_hold_data.get('max_drawdown', 0)
@@ -198,10 +198,118 @@ class OptimizationResultsDisplay:
         
         return pd.concat([param_df, optimization_info], ignore_index=True)
     
+    def display_compact_summary_table(self, optimization_results: Dict, 
+                                     strategy_name: str, market: str):
+        """Display compact horizontal summary table"""
+        
+        print("\n" + "="*120)
+        print("📊 OPTIMIZATION RESULTS SUMMARY")
+        print("="*120)
+        
+        if not optimization_results or 'test_performance' not in optimization_results:
+            print("❌ No optimization results available")
+            return
+            
+        test_perf = optimization_results.get('test_performance', {})
+        train_perf = optimization_results.get('train_performance', 0)
+        n_trials = optimization_results.get('n_trials', 0)
+        
+        # Calculate excess return vs Buy & Hold
+        buy_hold_benchmark = test_perf.get('buy_hold_benchmark', {})
+        buy_hold_return = 0
+        if isinstance(buy_hold_benchmark, dict):
+            buy_hold_return = buy_hold_benchmark.get('total_return', 0)
+        
+        excess_return = test_perf.get('total_return', 0) - buy_hold_return
+        
+        # Create horizontal summary table
+        summary_data = {
+            'Strategy': [strategy_name.upper()],
+            'Market': [market],
+            'Trials': [n_trials],
+            'Train Sharpe': [f"{train_perf:.4f}"],
+            'Test Sharpe': [f"{test_perf.get('sharpe_ratio', 0):.4f}"],
+            'Test Return': [f"{test_perf.get('total_return', 0)*100:.2f}%"],
+            'B&H Return': [f"{buy_hold_return*100:.2f}%"],
+            'Excess Return': [f"{excess_return*100:.2f}%"],
+            'Max Drawdown': [f"{test_perf.get('max_drawdown', 0)*100:.2f}%"],
+            'Total Trades': [test_perf.get('total_trades', 0)]
+        }
+        
+        df = pd.DataFrame(summary_data)
+        
+        # Format table with wide layout
+        table_str = tabulate(df, headers='keys', tablefmt='grid', showindex=False)
+        print(table_str)
+        
+        # Display optimized parameters in compact format
+        print("\n🎯 OPTIMIZED PARAMETERS")
+        print("="*120)
+        print()
+        best_params = optimization_results.get('best_params', {})
+        
+        if isinstance(best_params, dict) and market in best_params:
+            params = best_params[market]
+            print(f"{strategy_name.upper()}:")
+            print(f"  {market}:")
+            for param, value in params.items():
+                print(f"    - {param}: {value}")
+        else:
+            print("No optimized parameters available")
+        print()
+        
+        # Performance rating
+        total_return = test_perf.get('total_return', 0)
+        sharpe_ratio = test_perf.get('sharpe_ratio', 0)
+        max_drawdown = test_perf.get('max_drawdown', 0)
+        total_trades = test_perf.get('total_trades', 0)
+        
+        score = 0
+        if total_return > 0.05: score += 1  # 5%+ return
+        if sharpe_ratio > 1.0: score += 1   # Sharpe > 1
+        if max_drawdown > -0.1: score += 1  # MDD < 10%
+        if total_trades >= 10: score += 1   # Sufficient trades
+        if excess_return > 0.02: score += 1  # 2%+ excess return over Buy & Hold
+        
+        rating_map = {0: "⭐ Poor", 1: "⭐⭐ Below Average", 2: "⭐⭐⭐ Average", 
+                     3: "⭐⭐⭐⭐ Good", 4: "⭐⭐⭐⭐⭐ Excellent", 5: "⭐⭐⭐⭐⭐ Exceptional"}
+        
+        print(f"🏆 Performance Rating: {rating_map.get(score, '⭐ Poor')}")
+        
+        # Key insights
+        insights = []
+        if excess_return > 0.05:
+            insights.append("✅ Significantly outperformed Buy & Hold")
+        elif excess_return > 0.02:
+            insights.append("✅ Moderately outperformed Buy & Hold") 
+        elif excess_return < -0.02:
+            insights.append("⚠️ Underperformed Buy & Hold")
+        
+        if sharpe_ratio > 1.5:
+            insights.append("✅ Excellent risk-adjusted returns")
+        elif sharpe_ratio < 0.5:
+            insights.append("⚠️ Poor risk-adjusted returns")
+            
+        if max_drawdown < -0.2:
+            insights.append("⚠️ High maximum drawdown")
+        elif max_drawdown > -0.05:
+            insights.append("✅ Low drawdown risk")
+            
+        if insights:
+            print(f"💡 Key Insights: {' | '.join(insights)}")
+        
+        print("="*120)
+
     def display_optimization_results(self, optimization_results: Dict, 
                                    strategy_name: str, market: str, 
                                    show_details: bool = True):
         """Display comprehensive optimization results"""
+        
+        # Show compact summary first
+        self.display_compact_summary_table(optimization_results, strategy_name, market)
+        
+        if not show_details:
+            return
         
         print("\n" + "="*80)
         print(f"STRATEGY OPTIMIZATION RESULTS")
@@ -244,6 +352,13 @@ class OptimizationResultsDisplay:
             sharpe_ratio = test_perf.get('sharpe_ratio', 0)
             max_drawdown = test_perf.get('max_drawdown', 0)
             total_trades = test_perf.get('total_trades', 0)
+            
+            # Calculate excess return vs Buy & Hold
+            buy_hold_benchmark = test_perf.get('buy_hold_benchmark', {})
+            buy_hold_return = 0
+            if isinstance(buy_hold_benchmark, dict):
+                buy_hold_return = buy_hold_benchmark.get('total_return', 0)
+            excess_return = total_return - buy_hold_return
             
             print("\n🎯 PERFORMANCE SUMMARY")
             print("-" * 50)
