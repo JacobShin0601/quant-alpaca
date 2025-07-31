@@ -75,31 +75,29 @@ class SuperTrendStrategy(BaseStrategy):
         df['bullish_signal'] = df['trend_change'] > 0  # Changed from bearish to bullish
         df['bearish_signal'] = df['trend_change'] < 0  # Changed from bullish to bearish
         
-        # Additional indicators
-        if self.parameters.get('use_confirmation', True):
-            # Price position relative to SuperTrend
-            df['price_above_st'] = df['trade_price'] > df['supertrend']
-            df['distance_from_st'] = (df['trade_price'] - df['supertrend']) / df['supertrend']
-            
-            # Trend strength using consecutive candles in same direction
-            df['trend_strength'] = 0
-            consecutive_count = 0
-            prev_direction = 0
-            
-            for i in range(len(df)):
-                curr_direction = df['supertrend_direction'].iloc[i]
-                if curr_direction == prev_direction:
-                    consecutive_count += 1
-                else:
-                    consecutive_count = 1
-                df.iloc[i, df.columns.get_loc('trend_strength')] = consecutive_count * curr_direction
-                prev_direction = curr_direction
+        # Additional indicators - Always calculate these as they're used in signal generation
+        # Price position relative to SuperTrend
+        df['price_above_st'] = df['trade_price'] > df['supertrend']
+        df['distance_from_st'] = (df['trade_price'] - df['supertrend']) / df['supertrend']
         
-        # Volume analysis
-        if self.parameters.get('use_volume_analysis', True):
-            volume_period = self.parameters.get('volume_period', 20)
-            df['volume_ma'] = df['candle_acc_trade_volume'].rolling(window=volume_period).mean()
-            df['volume_ratio'] = df['candle_acc_trade_volume'] / df['volume_ma']
+        # Trend strength using consecutive candles in same direction
+        df['trend_strength'] = 0
+        consecutive_count = 0
+        prev_direction = 0
+        
+        for i in range(len(df)):
+            curr_direction = df['supertrend_direction'].iloc[i]
+            if curr_direction == prev_direction:
+                consecutive_count += 1
+            else:
+                consecutive_count = 1
+            df.iloc[i, df.columns.get_loc('trend_strength')] = consecutive_count * curr_direction
+            prev_direction = curr_direction
+        
+        # Volume analysis - Always calculate volume_ratio as it's used in signal generation
+        volume_period = self.parameters.get('volume_period', 20)
+        df['volume_ma'] = df['candle_acc_trade_volume'].rolling(window=volume_period).mean()
+        df['volume_ratio'] = df['candle_acc_trade_volume'] / df['volume_ma']
         
         # Clean up temporary columns
         df.drop(['high_low', 'high_close', 'low_close'], axis=1, inplace=True)
@@ -171,21 +169,29 @@ class SuperTrendStrategy(BaseStrategy):
             df.loc[pullback_sell, 'signal'] = -1
             
         elif strategy_variant == 'breakout':
-            # Trade on strong moves away from SuperTrend
+            # Trade on strong moves away from SuperTrend - more sensitive for crypto
             # Strong bullish breakout
             strong_buy = (
                 (df['supertrend_direction'] == 1) &
-                (df['distance_from_st'] > distance_threshold) &
-                (df['volume_ratio'] > volume_threshold) &
-                (df['bullish_signal'] | (df['trend_strength'] == 1))  # New trend or just started
+                (df['distance_from_st'] > distance_threshold * 0.5) &  # Reduced threshold
+                (df['volume_ratio'] > volume_threshold * 0.8) &  # Lower volume requirement
+                (
+                    df['bullish_signal'] | 
+                    (df['trend_strength'] >= 1) |  # Any positive trend
+                    (df['trade_price'] > df['supertrend'] * (1 + distance_threshold * 0.3))  # Price breakout
+                )
             )
             
             # Strong bearish breakout
             strong_sell = (
                 (df['supertrend_direction'] == -1) &
-                (df['distance_from_st'] < -distance_threshold) &
-                (df['volume_ratio'] > volume_threshold) &
-                (df['bearish_signal'] | (df['trend_strength'] == -1))  # New trend or just started
+                (df['distance_from_st'] < -distance_threshold * 0.5) &  # Reduced threshold
+                (df['volume_ratio'] > volume_threshold * 0.8) &  # Lower volume requirement
+                (
+                    df['bearish_signal'] | 
+                    (df['trend_strength'] <= -1) |  # Any negative trend
+                    (df['trade_price'] < df['supertrend'] * (1 - distance_threshold * 0.3))  # Price breakout
+                )
             )
             
             df.loc[strong_buy, 'signal'] = 1
@@ -208,9 +214,9 @@ class SuperTrendStrategy(BaseStrategy):
                     (df['supertrend_direction'] == 1) &  # In uptrend
                     (df['supertrend_direction'].shift(1) == 1) &  # Was in uptrend
                     (df['trade_price'] > df['supertrend']) &  # Price above SuperTrend
-                    (df['price_momentum'] > 0.005) &  # Positive momentum > 0.5%
-                    (df['volume_ratio'] > volume_threshold * 0.8) &  # Lower volume threshold
-                    (df['trend_strength'] >= 1)  # Any positive trend strength
+                    (df['price_momentum'] > 0.002) &  # Reduced momentum threshold
+                    (df['volume_ratio'] > volume_threshold * 0.6) &  # Even lower volume threshold
+                    (df['trend_strength'] >= 0)  # Allow neutral or positive trend
                 )
             )
             
@@ -222,16 +228,20 @@ class SuperTrendStrategy(BaseStrategy):
                 # Secondary signal: momentum loss in uptrend (defensive)
                 (
                     (df['supertrend_direction'] == 1) &  # Still in uptrend
-                    (df['trade_price'] < df['supertrend'] * 1.01) &  # Price close to SuperTrend
-                    (df['price_momentum'] < -0.01) &  # Negative momentum > -1%
-                    (df['volume_ratio'] > volume_threshold)  # Confirm with volume
+                    (df['trade_price'] < df['supertrend'] * 1.005) &  # Price very close to SuperTrend
+                    (df['price_momentum'] < -0.005) &  # Reduced negative momentum threshold
+                    (df['volume_ratio'] > volume_threshold * 0.9)  # Slightly lower volume requirement
                 )
             )
             
-            # Apply smart volume filter
+            # Apply smart volume filter with more lenient conditions
             if self.parameters.get('use_volume_analysis', True):
-                # Allow trades on volume surges even if regular volume is low
-                volume_condition = (df['volume_ratio'] > volume_threshold * 0.8) | df['volume_surge']
+                # Allow trades on volume surges or moderate volume
+                volume_condition = (
+                    (df['volume_ratio'] > volume_threshold * 0.5) |  # Much lower threshold
+                    df['volume_surge'] |
+                    (df['volume_ratio'].rolling(3).mean() > volume_threshold * 0.7)  # 3-period average
+                )
                 buy_setup = buy_setup & volume_condition & (df['volume_ratio'].notna())
                 sell_setup = sell_setup & volume_condition & (df['volume_ratio'].notna())
             
