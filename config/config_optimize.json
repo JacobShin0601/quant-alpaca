@@ -2,7 +2,7 @@
     "data": {
         "end_date": "2025-07-27",
         "lookback_days": 60,
-        "markets": ["KRW-ETH", "KRW-BTC", "KRW-SOL", "KRW-ADA", "KRW-DOT", "KRW-XRP"],
+        "markets": ["KRW-ETH", "KRW-BTC", "KRW-SOL", "KRW-ADA", "KRW-DOT", "KRW-XRP", "KRW-SOL"],
         "candle_unit": 1,
         "database_directory": "data/candles",
         "database_pattern": "{market}_candles.db"
