@@ -243,6 +243,106 @@ class UpbitDataScrapper:
     def get_latest_candles(self, market: str, count: int = 100) -> pd.DataFrame:
         """최신 캔들 데이터 조회"""
         return self.get_candle_data_from_db(market, limit=count)
+    
+    def get_latest_timestamp(self, market: str) -> Optional[str]:
+        """특정 마켓의 최신 데이터 타임스탬프 조회"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT MAX(candle_date_time_utc) 
+            FROM candles 
+            WHERE market = ?
+        ''', (market,))
+        
+        result = cursor.fetchone()
+        conn.close()
+        
+        return result[0] if result and result[0] else None
+    
+    def fetch_incremental_data(self, market: str, from_datetime: str = None) -> List[Dict]:
+        """증분 데이터 수집 - 특정 시점 이후의 새로운 데이터만 가져오기"""
+        try:
+            # 최신 타임스탬프부터 현재까지의 데이터만 수집
+            if not from_datetime:
+                from_datetime = self.get_latest_timestamp(market)
+            
+            if not from_datetime:
+                # 최초 수집시 - 최근 1시간 데이터만
+                candles = self.api.get_candles_minutes(
+                    market=market, 
+                    unit=1, 
+                    count=60  # 1시간분만
+                )
+            else:
+                # 증분 수집 - 최대 200개 (약 3시간)
+                candles = self.api.get_candles_minutes(
+                    market=market, 
+                    unit=1, 
+                    count=200,
+                    to=None  # 현재 시점까지
+                )
+                
+                # 기존 데이터보다 새로운 것만 필터링
+                if candles:
+                    from_timestamp = pd.to_datetime(from_datetime)
+                    filtered_candles = []
+                    
+                    for candle in candles:
+                        candle_time = pd.to_datetime(candle['candle_date_time_utc'])
+                        if candle_time > from_timestamp:
+                            filtered_candles.append(candle)
+                    
+                    candles = filtered_candles
+            
+            return candles
+            
+        except Exception as e:
+            print(f"Error fetching incremental data for {market}: {e}")
+            return []
+    
+    def update_market_data_incremental(self, market: str) -> int:
+        """마켓 데이터 증분 업데이트 - 새로운 데이터만 추가"""
+        try:
+            # 최신 타임스탬프 조회
+            latest_timestamp = self.get_latest_timestamp(market)
+            
+            # 증분 데이터 수집
+            new_candles = self.fetch_incremental_data(market, latest_timestamp)
+            
+            if new_candles:
+                # 새 데이터 저장
+                self.save_candles_to_db(new_candles, market)
+                print(f"Updated {market}: {len(new_candles)} new candles added")
+                return len(new_candles)
+            else:
+                # 새 데이터 없음
+                return 0
+                
+        except Exception as e:
+            print(f"Error updating incremental data for {market}: {e}")
+            return 0
+    
+    def get_recent_candles_optimized(self, market: str, hours: int = 168) -> pd.DataFrame:
+        """최적화된 최근 캔들 데이터 조회 - 메모리 효율적"""
+        conn = sqlite3.connect(self.db_path)
+        
+        # 시간 기반으로 필요한 데이터만 조회
+        query = '''
+            SELECT * FROM candles 
+            WHERE market = ? 
+            AND datetime(candle_date_time_utc) >= datetime('now', '-{} hours')
+            ORDER BY candle_date_time_utc DESC
+        '''.format(hours)
+        
+        try:
+            df = pd.read_sql_query(query, conn, params=[market])
+            conn.close()
+            return df
+        except Exception as e:
+            conn.close()
+            print(f"Error querying recent candles for {market}: {e}")
+            return pd.DataFrame()
 
 
 def main():

@@ -37,6 +37,9 @@ from actions.garch_position_sizing import GARCHPositionSizer
 from data.collector import UpbitDataCollector
 from agents.scrapper import UpbitDataScrapper
 
+# Import performance optimization utilities
+from utils.indicator_cache import get_global_indicator_cache, get_global_calculator
+
 
 class DeploymentAgent:
     """
@@ -72,6 +75,11 @@ class DeploymentAgent:
         self.market_data = {}
         self.market_regimes = {}
         
+        # Initialize performance optimization components
+        self.indicator_cache = get_global_indicator_cache()
+        self.indicator_calculator = get_global_calculator()
+        self.data_scrapers = {}  # Cache scraper instances per market
+        
         # Initialize position tracker
         self.positions = {}
         self.pending_orders = {}
@@ -90,6 +98,17 @@ class DeploymentAgent:
         self.last_data_update = {}
         self.last_risk_check = datetime.now()
         self.last_position_update = datetime.now()
+        
+        # Performance monitoring
+        self.performance_stats = {
+            'data_fetch_times': {},  # {market: [times]}
+            'indicator_calc_times': {},  # {market: [times]}
+            'signal_generation_times': {},  # {market: [times]}
+            'cache_hits': 0,
+            'cache_misses': 0,
+            'total_data_updates': 0,
+            'incremental_updates': 0
+        }
         
         # Performance tracking
         self.performance_metrics = {
@@ -402,54 +421,115 @@ class DeploymentAgent:
                 time.sleep(5)  # Sleep longer on error
     
     def _fetch_and_process_market_data(self, market: str):
-        """Fetch and process market data for a specific market"""
+        """Optimized fetch and process market data for a specific market"""
         try:
-            # Get database path
-            db_path = self.data_collector.get_database_path(market)
-            scrapper = UpbitDataScrapper(db_path)
+            start_time = time.time()
             
-            # Calculate lookback period
-            lookback_hours = self.config['data'].get('lookback_hours', 168)  # 7 days default
-            end_time = datetime.now()
-            start_time = end_time - timedelta(hours=lookback_hours)
+            # Get or create scraper instance for this market
+            if market not in self.data_scrapers:
+                db_path = self.data_collector.get_database_path(market)
+                self.data_scrapers[market] = UpbitDataScrapper(db_path)
             
-            # Format dates
-            start_date = start_time.strftime("%Y-%m-%d")
-            end_date = end_time.strftime("%Y-%m-%d")
+            scrapper = self.data_scrapers[market]
             
-            # Get data from database
-            df = scrapper.get_candle_data_from_db(
-                market=market,
-                start_date=start_date,
-                end_date=end_date
-            )
+            # Check if we have existing data for incremental update
+            existing_df = self.market_data.get(market)
             
-            if df.empty:
-                self.logger.warning(f"No data available for {market}, attempting to collect")
-                # Try to collect data
-                scrapper.scrape_market_data(market, days=lookback_hours/24)
-                df = scrapper.get_candle_data_from_db(
-                    market=market,
-                    start_date=start_date,
-                    end_date=end_date
-                )
+            if existing_df is not None and len(existing_df) > 0:
+                # Incremental update - only fetch new data
+                new_data_count = scrapper.update_market_data_incremental(market)
+                
+                if new_data_count > 0:
+                    # Get updated data - optimized query for recent data only
+                    lookback_hours = min(24, self.config['data'].get('lookback_hours', 168))  # Limit to 24h for performance
+                    df = scrapper.get_recent_candles_optimized(market, hours=lookback_hours)
+                    
+                    if not df.empty:
+                        # Process timestamps
+                        df['candle_date_time_utc'] = pd.to_datetime(df['candle_date_time_utc'])
+                        df.set_index('candle_date_time_utc', inplace=True)
+                        df = df.sort_index()  # Ensure chronological order
+                        
+                        # Update market data cache
+                        self.market_data[market] = df
+                        
+                        # Detect market regime (only on updated data)
+                        regime, indicators = self.regime_detector.detect_regime(df)
+                        self.market_regimes[market] = regime
+                        
+                        fetch_time = time.time() - start_time
+                        self.logger.debug(f"Incremental update for {market}: {new_data_count} new candles, {len(df)} total, {fetch_time:.3f}s")
+                        
+                        # Track performance stats
+                        if market not in self.performance_stats['data_fetch_times']:
+                            self.performance_stats['data_fetch_times'][market] = []
+                        self.performance_stats['data_fetch_times'][market].append(fetch_time)
+                        self.performance_stats['total_data_updates'] += 1
+                        self.performance_stats['incremental_updates'] += 1
+                        
+                        # Keep only recent samples to avoid memory growth
+                        if len(self.performance_stats['data_fetch_times'][market]) > 100:
+                            self.performance_stats['data_fetch_times'][market] = self.performance_stats['data_fetch_times'][market][-50:]
+                    else:
+                        self.logger.debug(f"No new data after incremental update for {market}")
+                else:
+                    # No new data, but still check if we need to update regime detection
+                    if market in self.market_data:
+                        regime, indicators = self.regime_detector.detect_regime(self.market_data[market])
+                        self.market_regimes[market] = regime
+                    
+                    fetch_time = time.time() - start_time
+                    self.logger.debug(f"No new data for {market}, regime check took {fetch_time:.3f}s")
+                    
+                    # Track minimal performance stats for regime checks
+                    if market not in self.performance_stats['data_fetch_times']:
+                        self.performance_stats['data_fetch_times'][market] = []
+                    self.performance_stats['data_fetch_times'][market].append(fetch_time)
+                    
+                    # Keep only recent samples to avoid memory growth
+                    if len(self.performance_stats['data_fetch_times'][market]) > 100:
+                        self.performance_stats['data_fetch_times'][market] = self.performance_stats['data_fetch_times'][market][-50:]
+            else:
+                # Initial data fetch - but limit to essential data only
+                lookback_hours = min(48, self.config['data'].get('lookback_hours', 168))  # Limit initial fetch
+                
+                # Use optimized query
+                df = scrapper.get_recent_candles_optimized(market, hours=lookback_hours)
                 
                 if df.empty:
-                    self.logger.error(f"Failed to collect data for {market}")
-                    return
-            
-            # Process timestamps
-            df['candle_date_time_utc'] = pd.to_datetime(df['candle_date_time_utc'])
-            df.set_index('candle_date_time_utc', inplace=True)
-            
-            # Update market data cache
-            self.market_data[market] = df
-            
-            # Detect market regime
-            regime, indicators = self.regime_detector.detect_regime(df)
-            self.market_regimes[market] = regime
-            
-            self.logger.debug(f"Updated data for {market}, regime: {regime.value}, candles: {len(df)}")
+                    self.logger.warning(f"No data available for {market}, attempting incremental collection")
+                    # Try minimal data collection
+                    scrapper.update_market_data_incremental(market)
+                    df = scrapper.get_recent_candles_optimized(market, hours=24)  # Just get 1 day
+                    
+                    if df.empty:
+                        self.logger.error(f"Failed to collect data for {market}")
+                        return
+                
+                # Process timestamps
+                df['candle_date_time_utc'] = pd.to_datetime(df['candle_date_time_utc'])
+                df.set_index('candle_date_time_utc', inplace=True)
+                df = df.sort_index()
+                
+                # Update market data cache
+                self.market_data[market] = df
+                
+                # Detect market regime
+                regime, indicators = self.regime_detector.detect_regime(df)
+                self.market_regimes[market] = regime
+                
+                fetch_time = time.time() - start_time
+                self.logger.info(f"Initial data fetch for {market}: {len(df)} candles, regime: {regime.value}, {fetch_time:.3f}s")
+                
+                # Track performance stats
+                if market not in self.performance_stats['data_fetch_times']:
+                    self.performance_stats['data_fetch_times'][market] = []
+                self.performance_stats['data_fetch_times'][market].append(fetch_time)
+                self.performance_stats['total_data_updates'] += 1
+                
+                # Keep only recent samples to avoid memory growth
+                if len(self.performance_stats['data_fetch_times'][market]) > 100:
+                    self.performance_stats['data_fetch_times'][market] = self.performance_stats['data_fetch_times'][market][-50:]
             
         except Exception as e:
             self.logger.error(f"Error fetching data for {market}: {e}")
@@ -478,8 +558,46 @@ class DeploymentAgent:
                     if strategy is None:
                         continue
                     
-                    # Generate signal
-                    signal = strategy.generate_signal_for_timestamp(df, market, has_position)
+                    # Calculate indicators with caching optimization
+                    indicator_start = time.time()
+                    try:
+                        df_with_indicators = self.indicator_calculator.calculate_indicators_optimized(
+                            strategy, market, df
+                        )
+                        self.performance_stats['cache_hits'] += 1
+                    except Exception as e:
+                        self.logger.warning(f"Failed to use cached indicators for {market}: {e}")
+                        # Fallback to direct calculation
+                        df_with_indicators = strategy.calculate_indicators(df.copy())
+                        self.performance_stats['cache_misses'] += 1
+                    
+                    indicator_time = time.time() - indicator_start
+                    
+                    # Generate signal using the strategy
+                    signal_start = time.time()
+                    if hasattr(strategy, 'generate_signal_for_timestamp'):
+                        signal = strategy.generate_signal_for_timestamp(df_with_indicators, market, has_position)
+                    else:
+                        # Fallback: generate signals for the dataframe and get the last one
+                        df_with_signals = strategy.generate_signals(df_with_indicators, market)
+                        signal = df_with_signals['signal'].iloc[-1] if 'signal' in df_with_signals.columns and len(df_with_signals) > 0 else 0
+                    
+                    signal_time = time.time() - signal_start
+                    
+                    # Track performance stats
+                    if market not in self.performance_stats['indicator_calc_times']:
+                        self.performance_stats['indicator_calc_times'][market] = []
+                    if market not in self.performance_stats['signal_generation_times']:
+                        self.performance_stats['signal_generation_times'][market] = []
+                    
+                    self.performance_stats['indicator_calc_times'][market].append(indicator_time)
+                    self.performance_stats['signal_generation_times'][market].append(signal_time)
+                    
+                    # Keep only recent samples to avoid memory growth
+                    if len(self.performance_stats['indicator_calc_times'][market]) > 100:
+                        self.performance_stats['indicator_calc_times'][market] = self.performance_stats['indicator_calc_times'][market][-50:]
+                    if len(self.performance_stats['signal_generation_times'][market]) > 100:
+                        self.performance_stats['signal_generation_times'][market] = self.performance_stats['signal_generation_times'][market][-50:]
                     
                     # Only process non-zero signals
                     if signal != 0:
@@ -986,6 +1104,10 @@ class DeploymentAgent:
         total_closed_trades = self.performance_metrics['win_count'] + self.performance_metrics['loss_count']
         win_rate = self.performance_metrics['win_count'] / total_closed_trades if total_closed_trades > 0 else 0
         
+        # Calculate performance stats
+        cache_total = self.performance_stats['cache_hits'] + self.performance_stats['cache_misses']
+        cache_hit_rate = self.performance_stats['cache_hits'] / cache_total if cache_total > 0 else 0
+        
         # Log overall status
         self.logger.info("========== CURRENT STATUS ==========")
         self.logger.info(f"Active positions: {len(self.positions)}")
@@ -995,6 +1117,19 @@ class DeploymentAgent:
         self.logger.info(f"Trades executed: {self.performance_metrics['trades_executed']}")
         self.logger.info(f"Win/Loss: {self.performance_metrics['win_count']}/{self.performance_metrics['loss_count']} ({win_rate:.2%})")
         self.logger.info(f"Fees paid: {self.performance_metrics['fees_paid']:,.2f} KRW")
+        
+        # Log performance optimization stats
+        self.logger.info("========== PERFORMANCE STATS ==========")
+        self.logger.info(f"Cache hit rate: {cache_hit_rate:.1%} ({self.performance_stats['cache_hits']}/{cache_total})")
+        self.logger.info(f"Data updates: {self.performance_stats['total_data_updates']} total, {self.performance_stats['incremental_updates']} incremental")
+        
+        # Log average processing times
+        for market in self.markets:
+            if market in self.performance_stats['data_fetch_times']:
+                avg_fetch = np.mean(self.performance_stats['data_fetch_times'][market][-10:])  # Last 10 samples
+                avg_indicators = np.mean(self.performance_stats['indicator_calc_times'].get(market, [0])[-10:])
+                avg_signals = np.mean(self.performance_stats['signal_generation_times'].get(market, [0])[-10:])
+                self.logger.info(f"{market}: fetch={avg_fetch:.3f}s, indicators={avg_indicators:.3f}s, signals={avg_signals:.3f}s")
         
         # Log position details
         if self.positions:
@@ -1019,7 +1154,7 @@ class DeploymentAgent:
                 # Get position age
                 age_hours = (datetime.now() - position['entry_time']).total_seconds() / 3600
                 
-                self.logger.info(f"{market}: {amount:.8f} @ {entry_price:,.2f} ’ {current_price:,.2f} "
+                self.logger.info(f"{market}: {amount:.8f} @ {entry_price:,.2f} ï¿½ {current_price:,.2f} "
                                f"({pnl_pct:+.2f}%, {unrealized_pnl:+,.2f} KRW, {age_hours:.1f}h)")
     
     def save_performance_report(self):
