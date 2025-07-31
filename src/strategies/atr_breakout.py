@@ -45,28 +45,25 @@ class ATRBreakoutStrategy(BaseStrategy):
         df['upper_breakout_signal'] = df['trade_price'] > df['upper_breakout'].shift(1)
         df['lower_breakout_signal'] = df['trade_price'] < df['lower_breakout'].shift(1)
         
-        # Trend filters
-        if self.parameters.get('use_trend_filter', True):
-            ma_period = self.parameters.get('ma_period', 50)
-            df['ma'] = df['trade_price'].rolling(window=ma_period).mean()
-            df['trend_up'] = df['trade_price'] > df['ma']
-            df['trend_down'] = df['trade_price'] < df['ma']
+        # Trend filters - Always calculate as used in multiple variants
+        ma_period = self.parameters.get('ma_period', 50)
+        df['ma'] = df['trade_price'].rolling(window=ma_period).mean()
+        df['trend_up'] = df['trade_price'] > df['ma']
+        df['trend_down'] = df['trade_price'] < df['ma']
         
-        # Volume analysis
-        if self.parameters.get('use_volume_confirmation', True):
-            volume_period = self.parameters.get('volume_period', 20)
-            df['volume_ma'] = df['candle_acc_trade_volume'].rolling(window=volume_period).mean()
-            df['volume_ratio'] = df['candle_acc_trade_volume'] / df['volume_ma']
-            
-            # Volume expansion during breakout
-            df['volume_breakout'] = df['volume_ratio'] > self.parameters.get('volume_threshold', 1.5)
+        # Volume analysis - Always calculate volume_ratio as it's used in multiple strategy variants
+        volume_period = self.parameters.get('volume_period', 20)
+        df['volume_ma'] = df['candle_acc_trade_volume'].rolling(window=volume_period).mean()
+        df['volume_ratio'] = df['candle_acc_trade_volume'] / df['volume_ma']
         
-        # Momentum indicators
-        if self.parameters.get('use_momentum', True):
-            momentum_period = self.parameters.get('momentum_period', 10)
-            df['momentum'] = df['trade_price'].pct_change(momentum_period)
-            df['momentum_positive'] = df['momentum'] > 0
-            df['momentum_negative'] = df['momentum'] < 0
+        # Volume expansion during breakout
+        df['volume_breakout'] = df['volume_ratio'] > self.parameters.get('volume_threshold', 1.5)
+        
+        # Momentum indicators - Always calculate as used in multiple variants
+        momentum_period = self.parameters.get('momentum_period', 10)
+        df['momentum'] = df['trade_price'].pct_change(momentum_period)
+        df['momentum_positive'] = df['momentum'] > 0
+        df['momentum_negative'] = df['momentum'] < 0
         
         # Clean up temporary columns
         df.drop(['high_low', 'high_close', 'low_close'], axis=1, inplace=True)
