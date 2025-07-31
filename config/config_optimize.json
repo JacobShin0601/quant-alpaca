@@ -248,10 +248,6 @@
             "confidence_threshold": {"type": "float", "low": 0.4, "high": 0.8, "step": 0.1}
         }
     },
-    "strategy": {
-        "name": "mean_reversion",
-        "parameters": {}
-    },
     "regime_config": {},
     "execution": {
         "log_level": "ERROR"
