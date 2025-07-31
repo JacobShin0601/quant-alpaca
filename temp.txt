@@ -46,4 +46,91 @@ INFO:backtesting.engine:Progress: 80% - Trades: 88, Cash: ₩2,078,947, Position
 INFO:backtesting.engine:Progress: 90% - Trades: 88, Cash: ₩2,078,947, Positions: 0
 INFO:backtesting.engine:... (78 more trades not shown)
 INFO:backtesting.engine:Backtest completed! Total trades: 88
+
+
+   ☐ Analyze enhanced_ensemble strategy implementation
+     ☐ Compare differences between ensemble strategies
+
+● Read(src/strategies/ensemble.py)
+  ⎿  Read 100 lines (ctrl+r to expand)
+
+● Read(src/strategies/ensemble.py)
+  ⎿  Read 200 lines (ctrl+r to expand)
+
+● Read(src/strategies/ensemble.py)
+  ⎿  Read 100 lines (ctrl+r to expand)
+
+● Update Todos
+  ⎿  ☒ Analyze ensemble strategy implementation         
+     ☐ Analyze enhanced_ensemble strategy implementation
+     ☐ Compare differences between ensemble strategies
+
+● Read(src/strategies/enhanced_ensemble.py)
+  ⎿  Read 150 lines (ctrl+r to expand)
+
+● Read(src/strategies/enhanced_ensemble.py)
+  ⎿  Read 150 lines (ctrl+r to expand)
+
+● Update Todos
+  ⎿  ☒ Analyze ensemble strategy implementation         
+     ☒ Analyze enhanced_ensemble strategy implementation
+     ☐ Compare differences between ensemble strategies
+
+● Ensemble vs Enhanced Ensemble 전략 비교
+
+  1. Ensemble 전략 (ensemble.py)
+
+  핵심 특징:
+  - 매크로 시장 체제 감지: trending_up, trending_down, sideways, volatile
+  - 실시간 성과 추적: 각 전략의 승률, Sharpe ratio, 모멘텀, 일관성 추적
+  - 동적 가중치 조정: Softmax 정규화를 통한 성과 기반 가중치 할당
+  - 상관관계 조정 신호 집계: 높은 상관관계 전략의 가중치 감소
+  - 체제 전환 로직: 급격한/점진적 전환 지원, 진동 방지
+  - Kelly Criterion 포지션 사이징: 다중 요소 기반 최적 사이징
+
+  주요 기능:
+  - 체제별 전략 그룹 (primary/secondary)
+  - 신뢰도 점수 계산 (승률, Sharpe, 모멘텀, 일관성 조합)
+  - 미실현 손익 추적
+  - 체제 전환 시 부드러운 전환
+
+  2. Enhanced Ensemble 전략 (enhanced_ensemble.py)
+
+  핵심 특징:
+  - 이중 체제 감지 시스템:
+    - 매크로 체제: trending_up, trending_down, sideways, volatile
+    - 미시구조 체제: trending_liquid, trending_illiquid, mean_reverting_liquid, mean_reverting_illiquid,
+  volatile_thin, stable_liquid, mixed
+  - 미시구조 분석:
+    - 거래량 클러스터링 및 가속도
+    - 가격 모멘텀 지속성
+    - 스프레드 프록시 추정
+    - 가격 영향 근사치
+    - 평균 회귀 경향
+  - 적응형 전략 선택: 매크로+미시구조 체제 조합으로 최적 전략 선택
+  - AdaptiveStrategyMixin 상속: 롤링 파라미터 최적화 지원
+
+  주요 기능:
+  - 미시구조 지표 기반 유동성/시장 상태 파악
+  - 전략 점수 계산 (매크로 60% + 미시구조 40%)
+  - 최대 활성 전략 수 제한
+  - 신뢰도 기반 가중치 조정
+
+  주요 차이점
+
+  1. 체제 감지 복잡도:
+    - Ensemble: 매크로 체제만 사용 (4가지)
+    - Enhanced: 매크로 + 미시구조 체제 (4x7=28가지 조합)
+  2. 전략 선택 방식:
+    - Ensemble: 체제별 사전 정의된 전략 그룹
+    - Enhanced: 체제 조합에 따른 동적 전략 선택
+  3. 성과 추적:
+    - Ensemble: 상세한 실시간 성과 추적 및 신뢰도 점수
+    - Enhanced: 간단한 성과 추적, 적응형 최적화에 중점
+  4. 신호 생성:
+    - Ensemble: 상관관계 조정된 가중 평균
+    - Enhanced: 체제 신뢰도 기반 가중 신호
+  5. 용도:
+    - Ensemble: 안정적인 다중 전략 운용, 체제 기반 전략 로테이션
+    - Enhanced: 시장 미시구조 활용, 고빈도 거래 환경에 적합
  advanced_vwap completed: 134 trades

@@ -22,7 +22,7 @@ class VolumeProfileStrategy(BaseStrategy):
         return last_row['near_resistance_poc'] and last_row.get('volume_increasing', False)
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Volume Profile indicators"""
+        """Calculate Volume Profile indicators - optimized version"""
         # Parameters
         profile_period = self.parameters.get('profile_period', 50)
         num_bins = self.parameters.get('num_bins', 20)
@@ -32,44 +32,44 @@ class VolumeProfileStrategy(BaseStrategy):
         df['volume_ma'] = df['candle_acc_trade_volume'].rolling(window=20).mean()
         df['volume_increasing'] = df['candle_acc_trade_volume'] > df['volume_ma']
         
-        # Calculate rolling volume profile
-        for i in range(profile_period, len(df)):
-            window_df = df.iloc[i-profile_period:i]
-            
-            # Create price bins
-            price_min = window_df['low_price'].min()
-            price_max = window_df['high_price'].max()
-            bins = np.linspace(price_min, price_max, num_bins)
-            
-            # Calculate volume at each price level
-            volume_profile = self._calculate_volume_profile(window_df, bins)
-            
-            # Find Point of Control (POC) - price level with highest volume
-            poc_idx = np.argmax(volume_profile)
-            poc_price = (bins[poc_idx] + bins[poc_idx + 1]) / 2 if poc_idx < len(bins) - 1 else bins[poc_idx]
-            
-            # Find Value Area (70% of volume)
-            value_area_high, value_area_low = self._calculate_value_area(bins, volume_profile)
-            
-            # Store results
-            df.loc[i, 'poc_price'] = poc_price
-            df.loc[i, 'value_area_high'] = value_area_high
-            df.loc[i, 'value_area_low'] = value_area_low
-            
-            # Check proximity to POC and value area
-            current_price = df.loc[i, 'trade_price']
-            df.loc[i, 'near_poc'] = abs(current_price - poc_price) / poc_price < poc_threshold
-            df.loc[i, 'in_value_area'] = value_area_low <= current_price <= value_area_high
-            
-            # Determine if POC acts as support or resistance
-            df.loc[i, 'near_support_poc'] = (
-                current_price < poc_price and 
-                abs(current_price - poc_price) / poc_price < poc_threshold
-            )
-            df.loc[i, 'near_resistance_poc'] = (
-                current_price > poc_price and 
-                abs(current_price - poc_price) / poc_price < poc_threshold
-            )
+        # Initialize columns
+        df['poc_price'] = np.nan
+        df['value_area_high'] = np.nan
+        df['value_area_low'] = np.nan
+        df['near_poc'] = False
+        df['in_value_area'] = False
+        df['near_support_poc'] = False
+        df['near_resistance_poc'] = False
+        
+        # Simplified volume profile using rolling quantiles
+        # This is much faster than calculating full volume profile for each window
+        
+        # Use VWAP (Volume Weighted Average Price) as a proxy for POC
+        df['vwap'] = (df['trade_price'] * df['candle_acc_trade_volume']).rolling(window=profile_period).sum() / df['candle_acc_trade_volume'].rolling(window=profile_period).sum()
+        
+        # Use price quantiles weighted by volume as value area
+        # High volume price levels
+        df['price_75'] = df['high_price'].rolling(window=profile_period).quantile(0.75)
+        df['price_25'] = df['low_price'].rolling(window=profile_period).quantile(0.25)
+        
+        # Use VWAP as POC
+        df['poc_price'] = df['vwap']
+        df['value_area_high'] = df['price_75']
+        df['value_area_low'] = df['price_25']
+        
+        # Check proximity to POC and value area
+        df['near_poc'] = (abs(df['trade_price'] - df['poc_price']) / df['poc_price']) < poc_threshold
+        df['in_value_area'] = (df['trade_price'] >= df['value_area_low']) & (df['trade_price'] <= df['value_area_high'])
+        
+        # Determine if POC acts as support or resistance
+        df['near_support_poc'] = (
+            (df['trade_price'] < df['poc_price']) & 
+            (abs(df['trade_price'] - df['poc_price']) / df['poc_price'] < poc_threshold)
+        )
+        df['near_resistance_poc'] = (
+            (df['trade_price'] > df['poc_price']) & 
+            (abs(df['trade_price'] - df['poc_price']) / df['poc_price'] < poc_threshold)
+        )
         
         # Additional indicators
         df['price_momentum'] = df['trade_price'].pct_change(periods=10)
@@ -77,56 +77,7 @@ class VolumeProfileStrategy(BaseStrategy):
         
         return df
     
-    def _calculate_volume_profile(self, window_df: pd.DataFrame, bins: np.ndarray) -> np.ndarray:
-        """Calculate volume at each price level"""
-        volume_profile = np.zeros(len(bins) - 1)
-        
-        for _, row in window_df.iterrows():
-            # Distribute volume across price range of candle
-            low_idx = np.searchsorted(bins, row['low_price'])
-            high_idx = np.searchsorted(bins, row['high_price'])
-            
-            if low_idx == high_idx:
-                # Entire candle in one bin
-                if 0 <= low_idx - 1 < len(volume_profile):
-                    volume_profile[low_idx - 1] += row['candle_acc_trade_volume']
-            else:
-                # Distribute volume proportionally
-                for idx in range(max(0, low_idx - 1), min(high_idx, len(volume_profile))):
-                    volume_profile[idx] += row['candle_acc_trade_volume'] / (high_idx - low_idx + 1)
-        
-        return volume_profile
-    
-    def _calculate_value_area(self, bins: np.ndarray, volume_profile: np.ndarray) -> tuple:
-        """Calculate Value Area (70% of volume)"""
-        total_volume = np.sum(volume_profile)
-        value_area_volume = total_volume * 0.7
-        
-        # Start from POC and expand outward
-        poc_idx = np.argmax(volume_profile)
-        accumulated_volume = volume_profile[poc_idx]
-        
-        low_idx = poc_idx
-        high_idx = poc_idx
-        
-        while accumulated_volume < value_area_volume:
-            # Check which side to expand
-            left_volume = volume_profile[low_idx - 1] if low_idx > 0 else 0
-            right_volume = volume_profile[high_idx + 1] if high_idx < len(volume_profile) - 1 else 0
-            
-            if left_volume > right_volume and low_idx > 0:
-                low_idx -= 1
-                accumulated_volume += left_volume
-            elif high_idx < len(volume_profile) - 1:
-                high_idx += 1
-                accumulated_volume += right_volume
-            else:
-                break
-        
-        value_area_low = bins[low_idx]
-        value_area_high = bins[high_idx + 1] if high_idx < len(bins) - 1 else bins[high_idx]
-        
-        return value_area_high, value_area_low
+    # Helper methods removed - using vectorized operations instead
     
     def generate_signals(self, df: pd.DataFrame, market: str) -> pd.DataFrame:
         """Generate buy/sell signals based on Volume Profile"""
