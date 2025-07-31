@@ -136,12 +136,14 @@
             "volume_threshold": {"type": "float", "low": 1.0, "high": 2.0, "step": 0.2}
         },
         "supertrend": {
-            "atr_period": {"type": "int", "low": 7, "high": 14, "step": 1},
-            "multiplier": {"type": "float", "low": 2.0, "high": 4.0, "step": 0.5},
-            "strategy_variant": {"type": "categorical", "choices": ["classic", "multi_timeframe"]},
+            "atr_period": {"type": "int", "low": 5, "high": 16, "step": 1},
+            "multiplier": {"type": "float", "low": 1.5, "high": 3.5, "step": 0.25},
+            "strategy_variant": {"type": "categorical", "choices": ["enhanced", "classic", "pullback", "breakout"]},
             "use_volume_analysis": {"type": "categorical", "choices": [true, false]},
-            "volume_threshold": {"type": "float", "low": 1.0, "high": 2.0, "step": 0.2},
-            "use_confirmation": {"type": "categorical", "choices": [true, false]}
+            "volume_threshold": {"type": "float", "low": 0.8, "high": 1.8, "step": 0.1},
+            "use_confirmation": {"type": "categorical", "choices": [true, false]},
+            "min_trend_strength": {"type": "int", "low": 1, "high": 4, "step": 1},
+            "distance_threshold": {"type": "float", "low": 0.005, "high": 0.025, "step": 0.005}
         },
         "atr_breakout": {
             "atr_period": {"type": "int", "low": 10, "high": 20, "step": 2},

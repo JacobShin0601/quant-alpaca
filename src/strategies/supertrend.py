@@ -110,23 +110,41 @@ class SuperTrendStrategy(BaseStrategy):
         """Generate SuperTrend trading signals"""
         df['signal'] = 0
         
+        # Ensure we have enough data
+        if len(df) < 50:
+            return df
+        
+        # Fill NaN values to avoid issues
+        df = df.ffill().fillna(0)
+        
         # Strategy parameters
-        min_trend_strength = self.parameters.get('min_trend_strength', 3)
-        volume_threshold = self.parameters.get('volume_threshold', 1.2)
-        distance_threshold = self.parameters.get('distance_threshold', 0.02)  # 2% from SuperTrend
+        min_trend_strength = self.parameters.get('min_trend_strength', 2)  # Reduced from 3
+        volume_threshold = self.parameters.get('volume_threshold', 1.1)   # Reduced from 1.2
+        distance_threshold = self.parameters.get('distance_threshold', 0.015)  # Reduced from 2%
         
         # Strategy variants
-        strategy_variant = self.parameters.get('strategy_variant', 'classic')
+        strategy_variant = self.parameters.get('strategy_variant', 'enhanced')  # Changed default
         
         if strategy_variant == 'classic':
-            # Classic SuperTrend signals - trade on trend changes
-            buy_signal = df['bullish_signal']
-            sell_signal = df['bearish_signal']
+            # Classic SuperTrend signals - trade on trend changes with improved conditions
+            buy_signal = (
+                df['bullish_signal'] & 
+                (df['bullish_signal'].notna()) &  # Valid signal data
+                (df['supertrend_direction'] == 1) &  # Confirm uptrend
+                (df['trade_price'] > df['supertrend'] * 1.001)  # Price above SuperTrend with buffer
+            )
+            
+            sell_signal = (
+                df['bearish_signal'] & 
+                (df['bearish_signal'].notna()) &  # Valid signal data
+                (df['supertrend_direction'] == -1) &  # Confirm downtrend
+                (df['trade_price'] < df['supertrend'] * 0.999)  # Price below SuperTrend with buffer
+            )
             
             # Apply volume filter if enabled
             if self.parameters.get('use_volume_analysis', True):
-                buy_signal = buy_signal & (df['volume_ratio'] > volume_threshold)
-                sell_signal = sell_signal & (df['volume_ratio'] > volume_threshold)
+                buy_signal = buy_signal & (df['volume_ratio'] > volume_threshold) & (df['volume_ratio'].notna())
+                sell_signal = sell_signal & (df['volume_ratio'] > volume_threshold) & (df['volume_ratio'].notna())
             
             df.loc[buy_signal, 'signal'] = 1
             df.loc[sell_signal, 'signal'] = -1
@@ -173,7 +191,54 @@ class SuperTrendStrategy(BaseStrategy):
             df.loc[strong_buy, 'signal'] = 1
             df.loc[strong_sell, 'signal'] = -1
             
-        else:  # 'filtered' strategy
+        elif strategy_variant == 'enhanced':  # New enhanced strategy
+            # Enhanced SuperTrend with better crypto market adaptation
+            
+            # Calculate momentum indicators
+            df['price_momentum'] = df['trade_price'].pct_change(3)  # 3-period momentum
+            df['volume_surge'] = df['volume_ratio'] > (volume_threshold * 1.5)
+            
+            # Buy conditions - more aggressive for crypto uptrends
+            buy_setup = (
+                # Primary signal: trend change to bullish
+                (df['bullish_signal'] & (df['bullish_signal'].notna())) |
+                
+                # Secondary signal: early uptrend continuation
+                (
+                    (df['supertrend_direction'] == 1) &  # In uptrend
+                    (df['supertrend_direction'].shift(1) == 1) &  # Was in uptrend
+                    (df['trade_price'] > df['supertrend']) &  # Price above SuperTrend
+                    (df['price_momentum'] > 0.005) &  # Positive momentum > 0.5%
+                    (df['volume_ratio'] > volume_threshold * 0.8) &  # Lower volume threshold
+                    (df['trend_strength'] >= 1)  # Any positive trend strength
+                )
+            )
+            
+            # Sell conditions - faster exit for crypto volatility
+            sell_setup = (
+                # Primary signal: trend change to bearish
+                (df['bearish_signal'] & (df['bearish_signal'].notna())) |
+                
+                # Secondary signal: momentum loss in uptrend (defensive)
+                (
+                    (df['supertrend_direction'] == 1) &  # Still in uptrend
+                    (df['trade_price'] < df['supertrend'] * 1.01) &  # Price close to SuperTrend
+                    (df['price_momentum'] < -0.01) &  # Negative momentum > -1%
+                    (df['volume_ratio'] > volume_threshold)  # Confirm with volume
+                )
+            )
+            
+            # Apply smart volume filter
+            if self.parameters.get('use_volume_analysis', True):
+                # Allow trades on volume surges even if regular volume is low
+                volume_condition = (df['volume_ratio'] > volume_threshold * 0.8) | df['volume_surge']
+                buy_setup = buy_setup & volume_condition & (df['volume_ratio'].notna())
+                sell_setup = sell_setup & volume_condition & (df['volume_ratio'].notna())
+            
+            df.loc[buy_setup, 'signal'] = 1
+            df.loc[sell_setup, 'signal'] = -1
+            
+        else:  # 'filtered' strategy - conservative approach
             # Use multiple confirmations
             # Buy conditions
             buy_setup = (
@@ -199,13 +264,14 @@ class SuperTrendStrategy(BaseStrategy):
             
             # Apply filters
             if self.parameters.get('use_volume_analysis', True):
-                buy_setup = buy_setup & (df['volume_ratio'] > volume_threshold)
-                sell_setup = sell_setup & (df['volume_ratio'] > volume_threshold)
+                buy_setup = buy_setup & (df['volume_ratio'] > volume_threshold) & (df['volume_ratio'].notna())
+                sell_setup = sell_setup & (df['volume_ratio'] > volume_threshold) & (df['volume_ratio'].notna())
             
             # ATR filter for volatility
             if self.parameters.get('use_atr_filter', True):
                 atr_min = self.parameters.get('atr_min_threshold', 0.001)  # 0.1% minimum ATR
                 atr_filter = (df['atr'] / df['trade_price']) > atr_min
+                atr_filter = atr_filter & (df['atr'].notna())
                 buy_setup = buy_setup & atr_filter
                 sell_setup = sell_setup & atr_filter
             
