@@ -68,6 +68,10 @@ class HighFrequencyVWAPStrategy(BaseStrategy):
         # Liquidity scoring
         if self.liquidity_filter:
             self._calculate_liquidity_score(df)
+        else:
+            # Set default liquidity values when filter is disabled
+            df['liquidity_score'] = 1.0
+            df['liquidity_percentile'] = 0.5
         
         # Signal strength calculation
         self._calculate_signal_strength(df)
@@ -331,21 +335,68 @@ class HighFrequencyVWAPStrategy(BaseStrategy):
             return (buy_ratio_5m < (1 - self.flow_threshold) and net_flow_10m < 0)
     
     def generate_signals(self, df: pd.DataFrame, market: str) -> pd.DataFrame:
-        """Generate high-frequency optimized trading signals"""
-        df['signal'] = np.zeros(len(df), dtype=np.int8)
+        """Generate high-frequency optimized trading signals - vectorized version"""
+        df['signal'] = 0
         
         # Only generate signals after sufficient warm-up period
         warmup_period = max(self.medium_periods) + 50
         
-        for i in range(warmup_period, len(df)):
-            current_row = df.iloc[i]
+        # Get parameters
+        vwap_threshold = self.parameters.get('vwap_threshold', 0.002)
+        volume_threshold = self.parameters.get('volume_threshold', 1.2)
+        primary_period = self.parameters.get('vwap_period', 30)
+        
+        # Primary VWAP deviation column
+        vwap_dev_col = f'vwap_dev_{primary_period}m'
+        
+        # Basic buy signals (vectorized)
+        buy_conditions = (
+            (df.index >= df.index[warmup_period]) &  # After warmup
+            (df[vwap_dev_col] < -vwap_threshold) &  # Below VWAP
+            (df['volume_normalized'] > volume_threshold) &  # High volume
+            (df['spread_normalized'] <= 2.0)  # Reasonable spread
+        )
+        
+        # Basic sell signals (vectorized)
+        sell_conditions = (
+            (df.index >= df.index[warmup_period]) &  # After warmup
+            (df[vwap_dev_col] > vwap_threshold) &  # Above VWAP
+            (df['volume_normalized'] > volume_threshold) &  # High volume
+            (df['spread_normalized'] <= 2.0)  # Reasonable spread
+        )
+        
+        # Additional filters if enabled
+        if self.liquidity_filter and 'liquidity_percentile' in df.columns:
+            buy_conditions = buy_conditions & (df['liquidity_percentile'] >= 0.1)
+            sell_conditions = sell_conditions & (df['liquidity_percentile'] >= 0.1)
+        
+        # Volume flow confirmation if available
+        if 'buy_ratio_5m' in df.columns and self.parameters.get('require_flow_confirmation', True):
+            flow_threshold = self.parameters.get('flow_threshold', 0.6)
+            buy_conditions = buy_conditions & (df['buy_ratio_5m'] > flow_threshold)
+            sell_conditions = sell_conditions & (df['buy_ratio_5m'] < (1 - flow_threshold))
+        
+        # Multi-timeframe alignment if enabled
+        if self.parameters.get('require_timeframe_alignment', True):
+            # At least 2 out of 3 timeframes should show the same direction
+            buy_alignment = (
+                (df.get('vwap_dev_5m', 0) < 0).astype(int) +
+                (df.get('vwap_dev_15m', 0) < 0).astype(int) +
+                (df.get('vwap_dev_30m', 0) < 0).astype(int)
+            ) >= 2
             
-            # Check for buy signal
-            if self._should_buy(current_row, df):
-                df.loc[df.index[i], 'signal'] = 1
-            # Check for sell signal  
-            elif self._should_sell(current_row, df):
-                df.loc[df.index[i], 'signal'] = -1
+            sell_alignment = (
+                (df.get('vwap_dev_5m', 0) > 0).astype(int) +
+                (df.get('vwap_dev_15m', 0) > 0).astype(int) +
+                (df.get('vwap_dev_30m', 0) > 0).astype(int)
+            ) >= 2
+            
+            buy_conditions = buy_conditions & buy_alignment
+            sell_conditions = sell_conditions & sell_alignment
+        
+        # Apply signals
+        df.loc[buy_conditions, 'signal'] = 1
+        df.loc[sell_conditions, 'signal'] = -1
         
         # Signal quality filtering
         df = self._filter_signals_by_quality(df)
@@ -358,10 +409,11 @@ class HighFrequencyVWAPStrategy(BaseStrategy):
         min_liquidity_percentile = self.parameters.get('min_liquidity_percentile', 0.2)
         
         # Filter out low-quality signals
-        quality_mask = (
-            (df['signal_strength'] >= min_signal_strength) &
-            (df['liquidity_percentile'] >= min_liquidity_percentile)
-        )
+        quality_mask = (df['signal_strength'] >= min_signal_strength)
+        
+        # Only apply liquidity filter if liquidity data is available
+        if 'liquidity_percentile' in df.columns:
+            quality_mask = quality_mask & (df['liquidity_percentile'] >= min_liquidity_percentile)
         
         df.loc[~quality_mask, 'signal'] = 0
         
