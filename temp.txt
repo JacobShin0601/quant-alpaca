@@ -133,4 +133,123 @@ INFO:backtesting.engine:Backtest completed! Total trades: 88
   5. 용도:
     - Ensemble: 안정적인 다중 전략 운용, 체제 기반 전략 로테이션
     - Enhanced: 시장 미시구조 활용, 고빈도 거래 환경에 적합
- advanced_vwap completed: 134 trades
+ 
+
+ 🚀 실행 방법
+
+  1. 시뮬레이션 모드 (안전한 테스트)
+
+  # 기본 시뮬레이션 실행
+  ./run_deploy.sh
+
+  # 또는 명시적으로
+  ./run_deploy.sh --simulation
+
+  2. 실제 거래 모드 (API 키 필요)
+
+  # .env 파일에 API 키 설정 후
+  ./run_deploy.sh --real-time
+
+  🔧 전략 커스터마이징
+
+  1. 다른 전략으로 변경하기
+
+  사용 가능한 전략들:
+  "strategy": "bollinger_bands"      // 볼린저 밴드
+  "strategy": "vwap"                 // VWAP 전략
+  "strategy": "supertrend"           // 슈퍼트렌드
+  "strategy": "mt_macd"              // 멀티타임프레임 MACD
+  "strategy": "ensemble"             // 고급 앙상블
+  "strategy": "enhanced_ensemble"    // 초고급 앙상블
+  "strategy": "mean_reversion"       // 평균 회귀
+  "strategy": "aroon"                // 아룬 오실레이터
+  "strategy": "fibonacci_retracement" // 피보나치
+
+  2. 새로운 마켓 추가
+
+  "strategies": {
+      "KRW-XRP": {
+          "strategy": "bollinger_bands",
+          "parameters": {
+              "window": 20,
+              "num_std": 2.0,
+              "entry_threshold": 1.0,
+              "exit_threshold": 0.5
+          }
+      }
+  }
+
+  3. 앙상블 전략 사용 (추천!)
+
+  "KRW-BTC": {
+      "strategy": "ensemble",
+      "parameters_file": "results/optimization/ensemble/KRW-BTC_best_params.json",
+      "parameters": {
+          "strategies": ["bollinger_bands", "vwap", "supertrend"],
+          "regime_detection": true,
+          "dynamic_weights": true
+      }
+  }
+
+  ⚙️ 주요 설정 옵션
+
+  1. 실행 설정
+
+  "execution": {
+      "real_trading": false,              // true로 변경하면 실제 거래
+      "max_trades_per_day": 10,           // 하루 최대 거래 수
+      "max_position_size_pct": 20.0,      // 최대 포지션 크기 (%)
+      "max_total_risk_pct": 50.0,         // 총 위험 한도 (%)
+      "simulation_initial_balance": 10000000  // 시뮬레이션 초기 자금
+  }
+
+  2. 주문 관리 설정 (새로 추가됨!)
+
+  "order_management": {
+      "monitor_interval_seconds": 1,       // 주문 모니터링 주기
+      "max_order_retries": 3,             // 주문 재시도 횟수
+      "order_validation": {
+          "min_order_amount_krw": 5000,   // 최소 주문 금액
+          "validate_balance": true         // 잔고 검증 여부
+      }
+  }
+
+  🔐 API 키 설정
+
+  방법 1: .env 파일 (권장)
+
+  # 프로젝트 루트에 .env 파일 생성
+  UPBIT_ACCESS_KEY=your_access_key_here
+  UPBIT_SECRET_KEY=your_secret_key_here
+
+  방법 2: 환경변수
+
+  export UPBIT_ACCESS_KEY=your_access_key_here
+  export UPBIT_SECRET_KEY=your_secret_key_here
+
+  📊 모니터링 및 로그
+
+  실행하면 다음과 같은 정보를 실시간으로 볼 수 있습니다:
+  - 활성 포지션 수
+  - 현재 잔고 및 P&L
+  - 실행된 거래 수 및 승률
+  - 주문 관리 상태 (새로 추가!)
+  - 성능 최적화 통계
+
+  🎛️ 빠른 설정 예시
+
+  보수적 설정 (낮은 위험):
+  "execution": {
+      "max_trades_per_day": 5,
+      "max_position_size_pct": 10.0,
+      "max_total_risk_pct": 30.0
+  }
+
+  공격적 설정 (높은 위험):
+  "execution": {
+      "max_trades_per_day": 20,
+      "max_position_size_pct": 30.0,
+      "max_total_risk_pct": 70.0
+  }
+
+  이제 OrderManager와 함께 프로덕션 레벨의 자동 거래 시스템이 완성되었습니다! 🎉

@@ -61,6 +61,31 @@
             }
         }
     },
+    "order_management": {
+        "monitor_interval_seconds": 1,
+        "max_order_retries": 3,
+        "retry_delay_seconds": 1,
+        "max_order_history": 1000,
+        "default_timeout_seconds": 30,
+        "order_validation": {
+            "min_order_amount_krw": 5000,
+            "max_order_amount_krw": 50000000,
+            "validate_balance": true,
+            "validate_market_state": true
+        },
+        "order_types": {
+            "default_buy_type": "price",
+            "default_sell_type": "market",
+            "allow_limit_orders": true,
+            "allow_ioc_orders": false,
+            "allow_fok_orders": false
+        },
+        "emergency_settings": {
+            "auto_cancel_stale_orders_minutes": 60,
+            "max_concurrent_orders_per_market": 1,
+            "cancel_all_on_shutdown": true
+        }
+    },
     "risk_management": {
         "dynamic_risk": {
             "regime_parameters": {

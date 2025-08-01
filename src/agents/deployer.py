@@ -17,6 +17,14 @@ import threading
 import queue
 import traceback
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()  # Load .env file if it exists
+except ImportError:
+    # dotenv not installed, skip
+    pass
+
 # Add parent directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
@@ -27,6 +35,7 @@ from strategies.base import BaseStrategy
 # Import actions
 from actions.upbit import UpbitAPI, UpbitTrader
 from actions.deploy_trader import DeployTrader
+from actions.order_management import OrderManager, OrderType, OrderState, create_buy_order, create_sell_order
 from actions.market_regime import MarketRegimeDetector, MarketRegime
 from actions.dynamic_risk_management import DynamicRiskManager
 from actions.var_risk_management import VaRRiskManager
@@ -92,6 +101,16 @@ class DeploymentAgent:
             simulation_mode=(not self.config['execution']['real_trading']),
             config=self.config['execution']
         )
+        
+        # Initialize order management system
+        self.order_manager = None
+        if self.upbit_trader and self.config['execution']['real_trading']:
+            self.order_manager = OrderManager(
+                upbit_trader=self.upbit_trader,
+                config=self.config.get('order_management', {})
+            )
+            # Setup order callbacks
+            self._setup_order_callbacks()
         
         # Status tracking
         self.running = False
@@ -266,6 +285,90 @@ class DeploymentAgent:
                 self.logger.error(f"Failed to load strategy for {market}: {e}")
                 continue
     
+    def _setup_order_callbacks(self):
+        """Setup callbacks for order events"""
+        if not self.order_manager:
+            return
+        
+        # Callback for when orders are filled
+        def on_order_filled(order_info):
+            self.logger.info(f"Order filled: {order_info.identifier} - {order_info.market} {order_info.side}")
+            self._handle_order_filled(order_info)
+        
+        # Callback for partial fills
+        def on_order_partially_filled(order_info):
+            self.logger.info(f"Order partially filled: {order_info.identifier} - {order_info.executed_volume}/{order_info.volume}")
+        
+        # Callback for order cancellation
+        def on_order_cancelled(order_info):
+            self.logger.info(f"Order cancelled: {order_info.identifier}")
+            self._handle_order_cancelled(order_info)
+        
+        # Callback for order failures
+        def on_order_failed(order_info):
+            self.logger.error(f"Order failed: {order_info.identifier}")
+        
+        # Register callbacks
+        self.order_manager.add_callback('on_order_filled', on_order_filled)
+        self.order_manager.add_callback('on_order_partially_filled', on_order_partially_filled)
+        self.order_manager.add_callback('on_order_cancelled', on_order_cancelled)
+        self.order_manager.add_callback('on_order_failed', on_order_failed)
+    
+    def _handle_order_filled(self, order_info):
+        """Handle filled order events"""
+        market = order_info.market
+        
+        if order_info.side == 'bid':  # Buy order filled
+            # Update position tracking
+            self.positions[market] = {
+                'amount': order_info.executed_volume,
+                'entry_price': order_info.avg_price or order_info.price,
+                'entry_time': datetime.now(),
+                'strategy': self.strategies.get(market).__class__.__name__ if market in self.strategies else 'Unknown',
+                'realized_pnl': 0,
+                'order_id': order_info.order_id
+            }
+            
+            # Update performance metrics
+            self.performance_metrics['trades_executed'] += 1
+            self.performance_metrics['fees_paid'] += order_info.paid_fee
+            
+        elif order_info.side == 'ask':  # Sell order filled
+            if market in self.positions:
+                # Calculate P&L
+                position = self.positions[market]
+                entry_price = position['entry_price']
+                exit_price = order_info.avg_price or order_info.price
+                amount = order_info.executed_volume
+                pnl = (exit_price - entry_price) * amount
+                
+                # Update performance metrics
+                self.performance_metrics['realized_pnl'] += pnl
+                self.performance_metrics['fees_paid'] += order_info.paid_fee
+                self.performance_metrics['trades_executed'] += 1
+                
+                # Update win/loss count
+                if pnl > 0:
+                    self.performance_metrics['win_count'] += 1
+                else:
+                    self.performance_metrics['loss_count'] += 1
+                
+                # Remove or update position
+                if order_info.executed_volume >= position['amount']:
+                    del self.positions[market]
+                else:
+                    self.positions[market]['amount'] -= order_info.executed_volume
+                
+                self.logger.info(f"Position closed: {market} P&L: {pnl:,.2f} KRW")
+    
+    def _handle_order_cancelled(self, order_info):
+        """Handle cancelled order events"""
+        # Clean up any pending order tracking
+        market = order_info.market
+        if market in self.pending_orders:
+            if self.pending_orders[market].get('order_id') == order_info.order_id:
+                del self.pending_orders[market]
+    
     def start(self):
         """Start the deployment agent"""
         if self.running:
@@ -277,6 +380,11 @@ class DeploymentAgent:
         
         # Fetch initial data and account info
         self.update_initial_state()
+        
+        # Start order management system if in real trading mode
+        if self.order_manager:
+            self.order_manager.start()
+            self.logger.info("Order management system started")
         
         # Start data update thread
         self.data_update_thread = threading.Thread(
@@ -330,6 +438,11 @@ class DeploymentAgent:
         """Gracefully shut down the deployment agent"""
         self.logger.info("Shutting down deployment agent...")
         self.running = False
+        
+        # Stop order management system
+        if self.order_manager:
+            self.order_manager.stop()
+            self.logger.info("Order management system stopped")
         
         # Wait for threads to complete
         if self.data_update_thread and self.data_update_thread.is_alive():
@@ -701,30 +814,39 @@ class DeploymentAgent:
                             continue
                         
                         # Execute buy order
-                        order_result = self.deploy_trader.execute_buy(
-                            market=market,
-                            price=price,
-                            position_size_pct=position_size_pct,
-                            regime=MarketRegime(signal_data['regime'])
-                        )
-                        
-                        if order_result.get('success', False):
-                            # Track the new position
-                            self.positions[market] = {
-                                'amount': order_result.get('amount', 0),
-                                'entry_price': order_result.get('executed_price', price),
-                                'entry_time': datetime.now(),
-                                'strategy': self.strategies[market].__class__.__name__,
-                                'realized_pnl': 0
-                            }
-                            
-                            # Update performance metrics
-                            self.performance_metrics['trades_executed'] += 1
-                            self.performance_metrics['fees_paid'] += order_result.get('fee', 0)
-                            
-                            self.logger.info(f"BUY executed for {market}: {order_result}")
+                        if self.order_manager and self.config['execution']['real_trading']:
+                            # Use OrderManager for real trading
+                            order_result = self._execute_buy_with_order_manager(
+                                market=market,
+                                price=price,
+                                position_size_pct=position_size_pct
+                            )
                         else:
-                            self.logger.error(f"Failed to execute buy for {market}: {order_result}")
+                            # Use DeployTrader for simulation
+                            order_result = self.deploy_trader.execute_buy(
+                                market=market,
+                                price=price,
+                                position_size_pct=position_size_pct,
+                                regime=MarketRegime(signal_data['regime'])
+                            )
+                            
+                            if order_result.get('success', False):
+                                # Track the new position (simulation only)
+                                self.positions[market] = {
+                                    'amount': order_result.get('amount', 0),
+                                    'entry_price': order_result.get('executed_price', price),
+                                    'entry_time': datetime.now(),
+                                    'strategy': self.strategies[market].__class__.__name__,
+                                    'realized_pnl': 0
+                                }
+                                
+                                # Update performance metrics
+                                self.performance_metrics['trades_executed'] += 1
+                                self.performance_metrics['fees_paid'] += order_result.get('fee', 0)
+                                
+                                self.logger.info(f"BUY executed for {market}: {order_result}")
+                            else:
+                                self.logger.error(f"Failed to execute buy for {market}: {order_result}")
                     
                     # Sell signal
                     elif signal == -1:
@@ -734,37 +856,45 @@ class DeploymentAgent:
                             continue
                         
                         # Execute sell order
-                        order_result = self.deploy_trader.execute_sell(
-                            market=market,
-                            price=price,
-                            amount=self.positions[market]['amount'],
-                            entry_price=self.positions[market]['entry_price']
-                        )
-                        
-                        if order_result.get('success', False):
-                            # Calculate PnL
-                            entry_price = self.positions[market]['entry_price']
-                            exit_price = order_result.get('executed_price', price)
-                            amount = self.positions[market]['amount']
-                            pnl = (exit_price - entry_price) * amount
-                            
-                            # Update performance metrics
-                            self.performance_metrics['realized_pnl'] += pnl
-                            self.performance_metrics['fees_paid'] += order_result.get('fee', 0)
-                            self.performance_metrics['trades_executed'] += 1
-                            
-                            # Update win/loss count
-                            if pnl > 0:
-                                self.performance_metrics['win_count'] += 1
-                            else:
-                                self.performance_metrics['loss_count'] += 1
-                            
-                            # Remove the position
-                            del self.positions[market]
-                            
-                            self.logger.info(f"SELL executed for {market}: {order_result}, PnL: {pnl:,.2f} KRW")
+                        if self.order_manager and self.config['execution']['real_trading']:
+                            # Use OrderManager for real trading
+                            order_result = self._execute_sell_with_order_manager(
+                                market=market,
+                                amount=self.positions[market]['amount']
+                            )
                         else:
-                            self.logger.error(f"Failed to execute sell for {market}: {order_result}")
+                            # Use DeployTrader for simulation
+                            order_result = self.deploy_trader.execute_sell(
+                                market=market,
+                                price=price,
+                                amount=self.positions[market]['amount'],
+                                entry_price=self.positions[market]['entry_price']
+                            )
+                            
+                            if order_result.get('success', False):
+                                # Calculate PnL
+                                entry_price = self.positions[market]['entry_price']
+                                exit_price = order_result.get('executed_price', price)
+                                amount = self.positions[market]['amount']
+                                pnl = (exit_price - entry_price) * amount
+                                
+                                # Update performance metrics
+                                self.performance_metrics['realized_pnl'] += pnl
+                                self.performance_metrics['fees_paid'] += order_result.get('fee', 0)
+                                self.performance_metrics['trades_executed'] += 1
+                                
+                                # Update win/loss count
+                                if pnl > 0:
+                                    self.performance_metrics['win_count'] += 1
+                                else:
+                                    self.performance_metrics['loss_count'] += 1
+                                
+                                # Remove the position
+                                del self.positions[market]
+                                
+                                self.logger.info(f"SELL executed for {market}: {order_result}, PnL: {pnl:,.2f} KRW")
+                            else:
+                                self.logger.error(f"Failed to execute sell for {market}: {order_result}")
                 
                 except queue.Empty:
                     # No signals to process
@@ -1118,6 +1248,16 @@ class DeploymentAgent:
         self.logger.info(f"Win/Loss: {self.performance_metrics['win_count']}/{self.performance_metrics['loss_count']} ({win_rate:.2%})")
         self.logger.info(f"Fees paid: {self.performance_metrics['fees_paid']:,.2f} KRW")
         
+        # Log order management status if available
+        if self.order_manager:
+            order_summary = self.get_order_status_summary()
+            self.logger.info("========== ORDER MANAGEMENT STATUS ==========")
+            self.logger.info(f"Active orders: {order_summary.get('active_orders', 0)}")
+            self.logger.info(f"Total locked KRW: {order_summary.get('total_locked_krw', 0):,.2f}")
+            self.logger.info(f"Order history count: {order_summary.get('order_history_count', 0)}")
+            if order_summary.get('pending_by_market'):
+                self.logger.info(f"Pending by market: {order_summary['pending_by_market']}")
+        
         # Log performance optimization stats
         self.logger.info("========== PERFORMANCE STATS ==========")
         self.logger.info(f"Cache hit rate: {cache_hit_rate:.1%} ({self.performance_stats['cache_hits']}/{cache_total})")
@@ -1226,6 +1366,115 @@ class DeploymentAgent:
         self.logger.info(f"Performance report saved to {report_file}")
         
         return report_file
+    
+    def _execute_buy_with_order_manager(self, market: str, price: float, position_size_pct: float) -> Dict[str, Any]:
+        """Execute buy order using OrderManager"""
+        try:
+            # Calculate order amount in KRW
+            current_balance = self.performance_metrics['current_balance']
+            order_amount_krw = current_balance * (position_size_pct / 100.0)
+            
+            # Create buy order using OrderManager
+            result = create_buy_order(
+                order_manager=self.order_manager,
+                market=market,
+                amount_krw=order_amount_krw,
+                ord_type=OrderType.PRICE  # Market buy order
+            )
+            
+            if result['success']:
+                # Add to pending orders tracking
+                identifier = result['identifier']
+                self.pending_orders[market] = {
+                    'order_id': result['order_id'],
+                    'identifier': identifier,
+                    'type': 'buy',
+                    'amount_krw': order_amount_krw,
+                    'timestamp': datetime.now()
+                }
+                
+                self.logger.info(f"Buy order placed via OrderManager: {market} - {order_amount_krw:,.2f} KRW")
+                return {'success': True, 'message': f"Buy order placed: {identifier}"}
+            else:
+                self.logger.error(f"Failed to place buy order: {result['message']}")
+                return {'success': False, 'message': result['message']}
+                
+        except Exception as e:
+            error_msg = f"Error executing buy with OrderManager: {str(e)}"
+            self.logger.error(error_msg)
+            return {'success': False, 'message': error_msg}
+    
+    def _execute_sell_with_order_manager(self, market: str, amount: float) -> Dict[str, Any]:
+        """Execute sell order using OrderManager"""
+        try:
+            # Create sell order using OrderManager
+            result = create_sell_order(
+                order_manager=self.order_manager,
+                market=market,
+                volume=amount,
+                ord_type=OrderType.MARKET  # Market sell order
+            )
+            
+            if result['success']:
+                # Add to pending orders tracking
+                identifier = result['identifier']
+                self.pending_orders[market] = {
+                    'order_id': result['order_id'],
+                    'identifier': identifier,
+                    'type': 'sell',
+                    'amount': amount,
+                    'timestamp': datetime.now()
+                }
+                
+                self.logger.info(f"Sell order placed via OrderManager: {market} - {amount:.8f}")
+                return {'success': True, 'message': f"Sell order placed: {identifier}"}
+            else:
+                self.logger.error(f"Failed to place sell order: {result['message']}")
+                return {'success': False, 'message': result['message']}
+                
+        except Exception as e:
+            error_msg = f"Error executing sell with OrderManager: {str(e)}"
+            self.logger.error(error_msg)
+            return {'success': False, 'message': error_msg}
+    
+    def cancel_pending_order(self, market: str) -> bool:
+        """Cancel pending order for a market"""
+        if not self.order_manager or market not in self.pending_orders:
+            return False
+        
+        try:
+            pending_order = self.pending_orders[market]
+            result = self.order_manager.cancel_order(
+                order_id=pending_order['order_id']
+            )
+            
+            if result['success']:
+                self.logger.info(f"Order cancelled for {market}: {pending_order['identifier']}")
+                return True
+            else:
+                self.logger.error(f"Failed to cancel order for {market}: {result['message']}")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Error cancelling order for {market}: {e}")
+            return False
+    
+    def get_order_status_summary(self) -> Dict[str, Any]:
+        """Get summary of order statuses"""
+        if not self.order_manager:
+            return {'active_orders': 0, 'pending_orders': 0}
+        
+        try:
+            portfolio_summary = self.order_manager.get_portfolio_summary()
+            return {
+                'active_orders': portfolio_summary['active_orders'],
+                'total_locked_krw': portfolio_summary['total_locked_krw'],
+                'pending_by_market': portfolio_summary['pending_orders_by_market'],
+                'order_history_count': portfolio_summary['order_history_count']
+            }
+        except Exception as e:
+            self.logger.error(f"Error getting order status summary: {e}")
+            return {'error': str(e)}
 
 
 if __name__ == "__main__":
