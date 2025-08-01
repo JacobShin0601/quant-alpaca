@@ -28,60 +28,49 @@ class AroonStrategy(BaseStrategy):
         )
     
     def calculate_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Aroon Up, Aroon Down, and Aroon Oscillator"""
+        """Calculate Aroon Up, Aroon Down, and Aroon Oscillator - optimized version"""
         # Parameters
         aroon_period = self.parameters.get('aroon_period', 25)
         
-        # Initialize columns
-        df['aroon_up'] = np.nan
-        df['aroon_down'] = np.nan
-        df['aroon_oscillator'] = np.nan
-        df['aroon_bullish_crossover'] = False
-        df['aroon_bearish_crossover'] = False
-        df['trend_strength'] = 'neutral'
+        # Helper function to calculate days since max/min
+        def days_since_max(x):
+            if len(x) < aroon_period:
+                return np.nan
+            return aroon_period - np.argmax(x) - 1
         
-        # Calculate Aroon indicators
-        for i in range(aroon_period, len(df)):
-            # Get the window
-            window_high = df['high_price'].iloc[i-aroon_period+1:i+1]
-            window_low = df['low_price'].iloc[i-aroon_period+1:i+1]
-            
-            # Find days since highest high and lowest low
-            days_since_high = aroon_period - window_high.argmax() - 1
-            days_since_low = aroon_period - window_low.argmin() - 1
-            
-            # Calculate Aroon Up and Down
-            aroon_up = ((aroon_period - days_since_high) / aroon_period) * 100
-            aroon_down = ((aroon_period - days_since_low) / aroon_period) * 100
-            
-            df.loc[i, 'aroon_up'] = aroon_up
-            df.loc[i, 'aroon_down'] = aroon_down
-            df.loc[i, 'aroon_oscillator'] = aroon_up - aroon_down
-            
-            # Detect crossovers
-            if i > aroon_period:
-                prev_up = df.loc[i-1, 'aroon_up']
-                prev_down = df.loc[i-1, 'aroon_down']
-                
-                # Bullish crossover: Aroon Up crosses above Aroon Down
-                if prev_up <= prev_down and aroon_up > aroon_down:
-                    df.loc[i, 'aroon_bullish_crossover'] = True
-                
-                # Bearish crossover: Aroon Down crosses above Aroon Up
-                if prev_down <= prev_up and aroon_down > aroon_up:
-                    df.loc[i, 'aroon_bearish_crossover'] = True
-            
-            # Determine trend strength
-            if aroon_up > 70 and aroon_down < 30:
-                df.loc[i, 'trend_strength'] = 'strong_up'
-            elif aroon_down > 70 and aroon_up < 30:
-                df.loc[i, 'trend_strength'] = 'strong_down'
-            elif aroon_up > 50 and aroon_down < 50:
-                df.loc[i, 'trend_strength'] = 'weak_up'
-            elif aroon_down > 50 and aroon_up < 50:
-                df.loc[i, 'trend_strength'] = 'weak_down'
-            else:
-                df.loc[i, 'trend_strength'] = 'neutral'
+        def days_since_min(x):
+            if len(x) < aroon_period:
+                return np.nan
+            return aroon_period - np.argmin(x) - 1
+        
+        # Calculate days since highest high and lowest low using rolling apply
+        df['days_since_high'] = df['high_price'].rolling(window=aroon_period).apply(days_since_max, raw=True)
+        df['days_since_low'] = df['low_price'].rolling(window=aroon_period).apply(days_since_min, raw=True)
+        
+        # Calculate Aroon Up and Down
+        df['aroon_up'] = ((aroon_period - df['days_since_high']) / aroon_period) * 100
+        df['aroon_down'] = ((aroon_period - df['days_since_low']) / aroon_period) * 100
+        df['aroon_oscillator'] = df['aroon_up'] - df['aroon_down']
+        
+        # Detect crossovers using shift
+        prev_up = df['aroon_up'].shift(1)
+        prev_down = df['aroon_down'].shift(1)
+        
+        # Bullish crossover: Aroon Up crosses above Aroon Down
+        df['aroon_bullish_crossover'] = (prev_up <= prev_down) & (df['aroon_up'] > df['aroon_down'])
+        
+        # Bearish crossover: Aroon Down crosses above Aroon Up
+        df['aroon_bearish_crossover'] = (prev_down <= prev_up) & (df['aroon_down'] > df['aroon_up'])
+        
+        # Determine trend strength using vectorized conditions
+        df['trend_strength'] = 'neutral'
+        df.loc[(df['aroon_up'] > 70) & (df['aroon_down'] < 30), 'trend_strength'] = 'strong_up'
+        df.loc[(df['aroon_down'] > 70) & (df['aroon_up'] < 30), 'trend_strength'] = 'strong_down'
+        df.loc[(df['aroon_up'] > 50) & (df['aroon_down'] < 50) & (df['trend_strength'] == 'neutral'), 'trend_strength'] = 'weak_up'
+        df.loc[(df['aroon_down'] > 50) & (df['aroon_up'] < 50) & (df['trend_strength'] == 'neutral'), 'trend_strength'] = 'weak_down'
+        
+        # Clean up temporary columns
+        df.drop(['days_since_high', 'days_since_low'], axis=1, inplace=True)
         
         # Additional trend indicators
         df['price_momentum'] = df['trade_price'].pct_change(periods=5)
