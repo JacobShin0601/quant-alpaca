@@ -181,7 +181,11 @@ class HighFrequencyVWAPStrategy(BaseStrategy):
         """Calculate signal strength based on multiple factors"""
         # VWAP deviation strength
         primary_vwap_period = self.parameters.get('vwap_period', 30)
-        vwap_dev_col = f'vwap_dev_{primary_vwap_period}m'
+        
+        # Find closest available period
+        all_periods = self.ultra_short_periods + self.short_periods + self.medium_periods
+        closest_period = min(all_periods, key=lambda x: abs(x - primary_vwap_period))
+        vwap_dev_col = f'vwap_dev_{closest_period}m'
         
         if vwap_dev_col in df.columns:
             df['vwap_signal_strength'] = abs(df[vwap_dev_col])
@@ -346,24 +350,31 @@ class HighFrequencyVWAPStrategy(BaseStrategy):
         volume_threshold = self.parameters.get('volume_threshold', 1.2)
         primary_period = self.parameters.get('vwap_period', 30)
         
-        # Primary VWAP deviation column
-        vwap_dev_col = f'vwap_dev_{primary_period}m'
+        # Primary VWAP deviation column - find closest available period
+        all_periods = self.ultra_short_periods + self.short_periods + self.medium_periods
+        closest_period = min(all_periods, key=lambda x: abs(x - primary_period))
+        vwap_dev_col = f'vwap_dev_{closest_period}m'
         
         # Basic buy signals (vectorized)
-        buy_conditions = (
-            (df.index >= df.index[warmup_period]) &  # After warmup
-            (df[vwap_dev_col] < -vwap_threshold) &  # Below VWAP
-            (df['volume_normalized'] > volume_threshold) &  # High volume
-            (df['spread_normalized'] <= 2.0)  # Reasonable spread
-        )
-        
-        # Basic sell signals (vectorized)
-        sell_conditions = (
-            (df.index >= df.index[warmup_period]) &  # After warmup
-            (df[vwap_dev_col] > vwap_threshold) &  # Above VWAP
-            (df['volume_normalized'] > volume_threshold) &  # High volume
-            (df['spread_normalized'] <= 2.0)  # Reasonable spread
-        )
+        if vwap_dev_col in df.columns:
+            buy_conditions = (
+                (df.index >= df.index[warmup_period]) &  # After warmup
+                (df[vwap_dev_col] < -vwap_threshold) &  # Below VWAP
+                (df['volume_normalized'] > volume_threshold) &  # High volume
+                (df['spread_normalized'] <= 2.0)  # Reasonable spread
+            )
+            
+            # Basic sell signals (vectorized)
+            sell_conditions = (
+                (df.index >= df.index[warmup_period]) &  # After warmup
+                (df[vwap_dev_col] > vwap_threshold) &  # Above VWAP
+                (df['volume_normalized'] > volume_threshold) &  # High volume
+                (df['spread_normalized'] <= 2.0)  # Reasonable spread
+            )
+        else:
+            # Fallback if column doesn't exist
+            buy_conditions = pd.Series(False, index=df.index)
+            sell_conditions = pd.Series(False, index=df.index)
         
         # Additional filters if enabled
         if self.liquidity_filter and 'liquidity_percentile' in df.columns:
